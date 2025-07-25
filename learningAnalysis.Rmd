@@ -1,0 +1,318 @@
+---
+title: "learningAnalysis_07_24"
+output: html_document
+date: "2025-07-24"
+---
+
+load packages
+
+```{r, echo=FALSE, include=FALSE}
+library(tidyverse)
+library(lme4)
+library(lmerTest)
+library(performance)
+library(patchwork)
+library(dplyr)
+library(ggplot2)
+library(emmeans)
+library(corrplot)
+library(Hmisc)
+library(broom)
+library(corrr)
+library(reshape2)
+```
+loading and tidying data
+
+```{r message=FALSE, warning=FALSE}
+# learning data
+df_learn <- read.csv('~/learning.csv')
+df_learn <- df_learn %>%
+  mutate(condition = ifelse(subID < 55, 'condition_80cue', 'condition_65cue'),
+         scaledTrial = as.numeric(scale(log(trial))), 
+         scaledImgLockedRT = as.numeric(scale(imgLockedRT)),
+         cueIdx = factor(cueIdx, levels=c(3,1,2), labels=c('neutral', 'non-neutral1', 'non-neutral2')))
+
+# estimates data
+df_est <- read.csv('~/Downloads/estimates.csv') %>%
+group_by(subID) %>%
+  mutate(zconf = as.numeric(scale(cueConfidence))) %>%
+  ungroup()
+
+df_est$cueDiff <- df_est$subjectiveCue - df_est$trueCue 
+
+## CueCorr column
+correlations <- df_est %>%
+  group_by(subID) %>%
+  summarise(corr = cor(trueCue, subjectiveCue, use = "complete.obs"))
+  
+df_est <- merge(df_est, correlations, by = "subID")
+df_est$cueCorr <- df_est$corr
+df_est$corr <- NULL
+
+## conditions column
+df_est$condition <- ifelse(df_est$subID < 55, '80/50_cue', '65/50_cue')
+
+# inference data
+df_inf <- read.csv('~/Downloads/inference_test.csv') %>%
+  group_by(subID) %>%
+  mutate (zconfRTs = as.numeric(scale(confRT)))
+```
+
+# slopes of regression lines during learning
+
+### truecue as predictor
+```{r}
+# model
+model1 <- lm(formula = imgLockedRT ~ scaledTrial * trueCue, data = df_learn)
+summary(model1)
+```
+
+### cueIdx as predictor
+```{r}
+# model
+model3 <- lm(formula = imgLockedRT ~ scaledTrial * cueIdx, data = df_learn)
+summary(model3)
+```
+
+# individual slopes
+```{r}
+trueCue_stats <- list()
+cueIdx_stats <- list()
+
+for(sub_id in unique(df_learn$subID)) {
+  df_sub <- df_learn[df_learn$subID == sub_id, ]
+  # the tidy/dplyr version
+  # df_sub <- df_learn %>% filter(subID == sub_id)
+  model_sub <- lm(scaledImgLockedRT ~ trial * trueCue + cueIdx, data = df_sub)
+  model_cat <- lm(scaledImgLockedRT ~ trial * cueIdx, data = df_sub)
+  
+  # Get tidy results with coefficients, t-values, and p-values
+  tidy_true <- tidy(model_sub)
+  tidy_cueIdx <- tidy(model_cat)
+  
+  # Add subject ID
+  tidy_true$subID <- sub_id
+  tidy_cueIdx$subID <- sub_id
+  
+  # Add to lists
+  trueCue_stats[[length(trueCue_stats) + 1]] <- tidy_true
+  cueIdx_stats[[length(cueIdx_stats) + 1]] <- tidy_cueIdx
+}
+
+# Combine all results
+df_trueCue_stats <- bind_rows(trueCue_stats)
+df_cueIdx_stats <- bind_rows(cueIdx_stats)
+
+# Reorder columns to put subID first
+df_trueCue_stats <- df_trueCue_stats[, c("subID", "term", "estimate", "std.error", "statistic", "p.value")]
+df_cueIdx_stats <- df_cueIdx_stats[, c("subID", "term", "estimate", "std.error", "statistic", "p.value")]
+
+```
+
+## measures of implicit learning of true probailities 
+```{r}
+# kept getting only .65 contrasts so set trueCue as factor
+# df_learn$trueCue_factor <- factor(df_learn$trueCue,
+                                  #levels = c(0.5, 0.65, 0.8))
+trueCue_contrasts <- list()
+trueCue_trends <- list()
+
+for(subID in unique(df_learn$subID)) {
+  df_sub <- df_learn[df_learn$subID == subID, ]
+
+#if(length(unique(df_sub$trueCue)) > 1)  {
+  sub_model <- lm(scaledImgLockedRT ~ scaledTrial * trueCue + imageIdx, df_sub)
+  sub_trends <- emtrends(sub_model, pairwise ~ trueCue, var='scaledTrial', at=list(trueCue=unique(df_sub$trueCue)))
+
+  # get contrast estimates
+  contrasts_df <- as.data.frame(sub_trends$contrasts)
+  contrasts_df$subID <-subID
+  
+  trends_df <- as.data.frame(sub_trends$emtrends)
+  trends_df$subID <- subID
+  
+  trueCue_contrasts[[length(trueCue_contrasts) + 1]] <- contrasts_df
+  trueCue_trends[[length(trueCue_trends) + 1]] <- trends_df
+ # }
+
+}
+# combine contrast results
+all_contrasts <- bind_rows(trueCue_contrasts)
+
+all_trends <- bind_rows(trueCue_trends)
+
+```
+
+
+
+### plots of RTs across learning: trueCue
+```{r, fig.width=10, fig.height=6, warning=FALSE, message=FALSE}
+
+df_learn %>%
+  filter(trial < 91) %>%
+  mutate(trueCue = factor(trueCue))%>%
+  ggplot(aes(x=trial, y=scaledImgLockedRT, color=trueCue, fill=trueCue)) +
+  theme_bw() + facet_wrap(~subID, nrow=4) + geom_hline(yintercept = 0, color='gray30') +
+  geom_point(size=0.5, alpha=0.7) + stat_smooth(method='lm', linewidth=0.75)
+
+df_trueCue_stats %>%
+  filter(term == 'trial' | term == 'trueCue' | term == 'trial:trueCue') %>%
+  select(subID, term, estimate, p.value) %>%
+  pivot_wider(id_cols=subID, names_from=term, values_from=c(estimate, p.value)) %>%
+  round(., digits=3)
+```
+
+## plots of RTs across learning: cueIdx
+```{r, fig.width=10, fig.height=6, warning=FALSE, message=FALSE}
+
+df_learn %>%
+  filter(trial < 91) %>%
+  ggplot(aes(x=trial, y=scaledImgLockedRT, color=cueIdx, fill=cueIdx)) +
+  theme_bw() + facet_wrap(~subID, nrow=4) + geom_hline(yintercept = 0, color='gray30') +
+  geom_point(size=0.5, alpha=0.7) + stat_smooth(method='lm', linewidth=0.75)
+
+df_cueIdx_stats %>%
+  filter(term == 'trial' | term == 'cueIdx' | term == 'trial:cueIdx') %>%
+  select(subID, term, estimate, p.value) %>%
+  pivot_wider(id_cols=subID, names_from=term, values_from=c(estimate, p.value)) %>%
+  round(., digits=3)
+```
+
+
+## individual correlations with different outcome variables of interest
+```{r}
+coef_trueCue <- df_trueCue_stats %>%
+  select(subID, term, estimate) %>%
+  pivot_wider(names_from = term, values_from = estimate)
+
+coef_cueIdx <- df_cueIdx_stats %>%
+  select(subID, term, estimate) %>%
+  pivot_wider(names_from = term, values_from = estimate)
+
+trueCue_full <- inner_join(coef_trueCue, df_est, by = "subID")
+cueIdx_full  <- inner_join(coef_cueIdx,  df_est, by = "subID")
+
+cor_test_matrix <- function(full_df, outcome_vars, exclude = "subID") {
+  coef_vars <- setdiff(names(full_df), c(exclude, outcome_vars))
+  
+  #numeric columns
+  full_df[coef_vars] <- lapply(full_df[coef_vars], function(x) as.numeric(as.character(x)))
+  full_df[outcome_vars] <- lapply(full_df[outcome_vars], function(x) as.numeric(as.character(x)))
+  
+  cor_matrix <- matrix(NA, nrow = length(coef_vars), ncol = length(outcome_vars),
+                       dimnames = list(coef_vars, outcome_vars))
+  p_matrix <- cor_matrix
+  
+  for (coef in coef_vars) {
+    for (outcome in outcome_vars) {
+      x <- full_df[[coef]]
+      y <- full_df[[outcome]]
+      valid <- complete.cases(x, y)
+      if (sum(valid) >= 3) {  
+        test <- cor.test(x[valid], y[valid])
+        cor_matrix[coef, outcome] <- test$estimate
+        p_matrix[coef, outcome] <- test$p.value
+      }
+    }
+  }
+  
+  list(correlation = cor_matrix, p.value = p_matrix)
+}
+
+outcome_vars <- c("cueDiff", "cueCorr", "cueConfidence", "subjectiveCue")
+
+trueCue_corrs <- cor_test_matrix(trueCue_full, outcome_vars)
+cueIdx_corrs  <- cor_test_matrix(cueIdx_full,  outcome_vars)
+
+trueCue_corrs$correlation     # Correlations: trueCue model
+trueCue_corrs$p.value         # P-values
+
+cueIdx_corrs$correlation      # Correlations: cueIdx model
+cueIdx_corrs$p.value          # P-values
+
+# Save correlation matrices
+# write.csv(trueCue_corrs$correlation, "trueCue_correlations_matrix.csv", row.names = TRUE)
+# write.csv(cueIdx_corrs$correlation,  "cueIdx_correlations_matrix.csv",  row.names = TRUE)
+
+# Save p-value matrices
+# write.csv(trueCue_corrs$p.value, "trueCue_pvalues_matrix.csv", row.names = TRUE)
+# write.csv(cueIdx_corrs$p.value,  "cueIdx_pvalues_matrix.csv",  row.names = TRUE)
+
+```
+
+# aggregate datasets
+merging datasets by subject ( thought it would be interesting to compare variables in different stages of testing) 
+```{r}
+df_est_agg <- df_est %>%
+  group_by(subID) %>%
+  summarise(
+    subjectiveCue = mean(subjectiveCue, na.rm = TRUE),
+    cueConfidence = mean(cueConfidence, na.rm = TRUE),
+    cueCorr = first(cueCorr), 
+    cueDiff = mean(cueDiff, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+#df_inf aggregate
+df_inf_agg <- df_inf %>%
+  group_by(subID) %>%
+  summarise(
+    inference_zRT = mean(zlogRT, na.rm = TRUE),
+    confidence_rating = mean(confidence, na.rm = TRUE),
+    confidence_zRT = mean(zconfRTs, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+combined_data <- df_est_agg %>%
+  full_join(df_inf_agg, by = "subID")
+
+```
+
+
+## correlation martix
+```{r}
+# Select variables
+outcome_vars <- combined_data %>%
+  select(subjectiveCue, cueConfidence, cueDiff, cueCorr, 
+         inference_zRT, confidence_rating, confidence_zRT) 
+
+# Correlation matrix
+cor_matrix <- cor(outcome_vars, use = "complete.obs")
+
+# re order variables
+desired_order <- c("subjectiveCue", "cueDiff", "cueCorr", "cueConfidence","confidence_rating", "confidence_zRT","inference_zRT")
+
+# Reorder correlation matrix
+cor_matrix_reordered <- cor_matrix[desired_order, desired_order]
+
+print(cor_matrix_reordered)
+#compute p vals
+p_matrix <- outcome_vars %>% 
+  as.matrix() %>%
+  rcorr()
+```
+
+## correlation map
+```{r}
+# Convert correlation matrix to long format
+cor_melted <- data.frame(
+  Var1 = rep(rownames(cor_matrix_reordered), ncol(cor_matrix_reordered)),
+  Var2 = rep(colnames(cor_matrix_reordered), each = nrow(cor_matrix_reordered)),
+  value = as.vector(cor_matrix_reordered)
+)
+
+# factor levels to order variables
+cor_melted$Var1 <- factor(cor_melted$Var1, levels = desired_order)
+cor_melted$Var2 <- factor(cor_melted$Var2, levels = rev(desired_order))
+
+
+# Create heatmap
+ggplot(cor_melted, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2)), color = "black", size = 3) +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                       midpoint = 0, limit = c(-1, 1), name = "Correlation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Correlation Heatmap", x = "", y = "") 
+```

@@ -1,0 +1,413 @@
+---
+title: "learningAnalysis"
+output: html_document
+date: "2025-07-17"
+---
+
+load packages
+
+```{r, echo=FALSE, include=FALSE}
+library(tidyverse)
+library(lme4)
+library(lmerTest)
+library(performance)
+library(patchwork)
+library(dplyr)
+library(ggplot2)
+library(emmeans)
+library(corrplot)
+library(Hmisc)
+library(broom)
+library(corrr)
+library(reshape2)
+```
+
+loading and tidying data
+
+```{r message=FALSE, warning=FALSE}
+# learning data
+df_learn <- read.csv('~/learning.csv')
+df_learn <- df_learn %>%
+  mutate(condition <- ifelse(subID < 55, 'condition_80cue', 'condition_65cue'),
+         cueIdx = factor(cueIdx, levels=c(3,1,2), labels=c('neutral', 'non-neutral1', 'non-neutral2')))
+
+# estimates data
+df_est <- read.csv('~/Downloads/estimates.csv') %>%
+group_by(subID) %>%
+  mutate(zconf = as.numeric(scale(cueConfidence))) %>%
+  ungroup()
+
+df_est$cueDiff <- df_est$subjectiveCue - df_est$trueCue 
+
+## CueCorr column
+correlations <- df_est %>%
+  group_by(subID) %>%
+  summarise(corr = cor(trueCue, subjectiveCue, use = "complete.obs"))
+  
+df_est <- merge(df_est, correlations, by = "subID")
+df_est$cueCorr <- df_est$corr
+df_est$corr <- NULL
+
+## conditions column
+df_est$condition <- ifelse(df_est$subID < 55, '80/50_cue', '65/50_cue')
+
+# inference data
+df_inf <- read.csv('~/Downloads/inference_test.csv')
+```
+
+# slopes of regression lines during learning
+
+## trueCue as predictor for aggregated data
+```{r}
+# model
+model1 <- lm(formula = imgLockedRT ~ trial * trueCue, data = df_learn)
+summary(model1)
+```
+- Interaction b/w trial and trueCue on reaction time, reaction times decreased across trials due to trueCue(negative slope)
+- Both main effects are negative = reaction times are getting faster across trials.
+- Interaction also negative = speeding up reaction times across trial bc of trueCue. 
+- Makes sense, participants are getting faster across trials, cues helping learning.
+
+tldr: Implicit learning of cue probabilities led to faster responses but decreseased over trials. 
+Questions/Ideas:
+did participants get lazy (just click a button)? Are they changing strategies? Using memory less?
+
+```{r}
+# model
+model2 <- lm(accuracy ~ trial * trueCue, data = df_learn)
+summary(model2)
+```
+- Large positive effect (0.47) as trueCue increases accuracy
+- Negative interaction shows benefits of trueCue diminish overtime
+- trueCue is helpful initially but shows little additional improvement over trials. 
+- Possible that participants became less dependent on memory cues overtime.
+tldr: Participants who better implicitly learned cue probabilities show higher initial accuracy that also decreases over trials. 
+
+Questions/Ideas:
+Does the continued exposure to cues over trials allow everyone to reach the similar levels of accuracy?
+
+## cueIdx as predictor
+```{r}
+# model
+model3 <- lm(formula = imgLockedRT ~ trial * cueIdx, data = df_learn)
+summary(model3)
+```
+
+- Main effects: non-neutral cue 1 and 2 both lead to faster RTs than the neutral cue, with cueIdx 1 being faster than cueIdx 2. 
+- Interactions: Difference! With cueIdx 1, the advantage on RTs decreases over trials. Counteracting the main trial effect. But with cueIdx 2 the advantage on RTs increases over trials.
+- Non neutral cues help reduce uncertainty in making the decision but the advantage diminishes over trials as participants learned to use neutral cue. 
+  - This shows that some cues (1) help reduce uncertainty early on, but become less needed while other cues (2) become more useful.
+
+Questions/Ideas:
+What makes 1 less useful over time and 2 more useful over time if they are both non-neutral??
+
+
+```{r}
+# model
+model4 <- lm(formula = accuracy ~ trial * cueIdx, data = df_learn)
+summary(model4)
+```
+- Main effects: both cues lead to increase in accuracy compared to neutral cues.(positive slopes + significant)
+- Interactions: cueIdx 1 has accuracy advantages that slightly increase overtime, while cueIdx 2 accuracy advantages slightly decrease overtime.(not significant tho)
+- Both non-neutral cues helped accuracy compared to neutral 3, but the advantages didn't change much over trials. 
+
+Question/Ideas: 
+Similar to RT one, what makes one cueIdx increase over trials but not the other?
+
+```{r, eval=FALSE, include=FALSE}
+#all slopes
+print("All extracted slopes:")
+print(paste("imgLockedRT ~ trueCue:", slope1))
+print(paste("accuracy ~ trueCue:", slope2))
+print(paste("imgLockedRT ~ cueIdx_non-neutral1:", slope3a))
+print(paste("imgLockedRT ~ cueIdx_non-neutral2:", slope3b))
+print(paste("accuracy ~ cueIdx_non-neutral1:", slope4a))
+print(paste("accuracy ~ cueIdx_non-neutral2:", slope4b))
+```
+
+## individual slopes
+```{r}
+trueCue_stats <- list()
+cueIdx_stats <- list()
+
+for(sub_id in unique(df_learn$subID)) {
+  df_sub <- df_learn[df_learn$subID == sub_id, ]
+  # the tidy/dplyr version
+  # df_sub <- df_learn %>% filter(subID == sub_id)
+  model_sub <- lm(imgLockedRT ~ trial * trueCue, data = df_sub)
+  model_cat <- lm(imgLockedRT ~ trial * cueIdx, data = df_sub)
+  
+  # Get tidy results with coefficients, t-values, and p-values
+  tidy_true <- tidy(model_sub)
+  tidy_cueIdx <- tidy(model_cat)
+  
+  # Add subject ID
+  tidy_true$subID <- sub_id
+  tidy_cueIdx$subID <- sub_id
+  
+  # Add to lists
+  trueCue_stats[[length(trueCue_stats) + 1]] <- tidy_true
+  cueIdx_stats[[length(cueIdx_stats) + 1]] <- tidy_cueIdx
+}
+
+# Combine all results
+df_trueCue_stats <- bind_rows(trueCue_stats)
+df_cueIdx_stats <- bind_rows(cueIdx_stats)
+
+# Reorder columns to put subID first
+df_trueCue_stats <- df_trueCue_stats[, c("subID", "term", "estimate", "std.error", "statistic", "p.value")]
+df_cueIdx_stats <- df_cueIdx_stats[, c("subID", "term", "estimate", "std.error", "statistic", "p.value")]
+
+
+# Write  results
+write.csv(df_trueCue_stats, "trueCue_detailed_stats.csv", row.names = FALSE)
+write.csv(df_cueIdx_stats, "cueIdx_detailed_stats.csv", row.names = FALSE)
+
+```
+
+## plots of RTs across learning: trueCue
+```{r, fig.width=10, fig.height=6, warning=FALSE, message=FALSE}
+
+df_learn %>%
+  filter(trial < 91) %>%
+  mutate(trueCue = factor(trueCue)) %>%
+  ggplot(aes(x=trial, y=imgLockedRT, color=trueCue, fill=trueCue)) +
+  theme_bw() + facet_wrap(~subID, nrow=4) + geom_hline(yintercept = 0, color='gray30') +
+  geom_point(size=0.5, alpha=0.7) + stat_smooth(method='lm', linewidth=0.75)
+
+df_trueCue_stats %>%
+  filter(term == 'trial' | term == 'trueCue' | term == 'trial:trueCue') %>%
+  select(subID, term, estimate, p.value) %>%
+  pivot_wider(id_cols=subID, names_from=term, values_from=c(estimate, p.value)) %>%
+  round(., digits=3)
+```
+
+## plots of RTs across learning: cueIdx
+```{r, fig.width=10, fig.height=6, warning=FALSE, message=FALSE}
+
+df_learn %>%
+  filter(trial < 91) %>%
+  ggplot(aes(x=trial, y=imgLockedRT, color=cueIdx, fill=cueIdx)) +
+  theme_bw() + facet_wrap(~subID, nrow=4) + geom_hline(yintercept = 0, color='gray30') +
+  geom_point(size=0.5, alpha=0.7) + stat_smooth(method='lm', linewidth=0.75)
+
+df_cueIdx_stats %>%
+  filter(term == 'trial' | term == 'cueIdx' | term == 'trial:cueIdx') %>%
+  select(subID, term, estimate, p.value) %>%
+  pivot_wider(id_cols=subID, names_from=term, values_from=c(estimate, p.value)) %>%
+  round(., digits=3)
+```
+
+## correlations between trueCue RT slopes during learning & explicit report behavior
+```{r}
+trueCue_fits <- df_trueCue_stats %>% filter(subID != 33)
+cueIdx_fits <- df_cueIdx_stats %>% filter(subID != 33)
+
+trueCue_fitsWider <- trueCue_fits %>% pivot_wider(id_cols = subID, names_from = term, values_from=c(estimate, statistic, p.value))
+# ^ the pivot from earlier
+
+#diff of explicit reports b/w neutral and non-neutral cues
+trueCue_diffValues <- df_est %>% 
+  mutate(trueCue = ifelse(trueCue==0.5, 'neutral', 'informative')) %>%
+  group_by(subID, trueCue, condition) %>%
+  summarise(subjectiveCue = mean(subjectiveCue, na.rm=T),
+            cueConfidence = mean(cueConfidence, na.rm=T),
+            zConfidence = mean(zconf, na.rm=T),
+            cueDiff = mean(cueDiff, na.rm=T),
+            .groups = 'keep')%>%
+  pivot_wider(id_cols=subID, values_from=c(subjectiveCue, cueConfidence, zConfidence, cueDiff), names_from=trueCue) %>%
+  summarise(subjectiveCueDiff = subjectiveCue_informative - subjectiveCue_neutral,
+            cueConfidenceDiff = cueConfidence_informative - cueConfidence_neutral,
+            zConfidenceDiff = zConfidence_informative - zConfidence_neutral,
+            cueDiffDiff = cueDiff_informative - cueDiff_neutral)
+
+#merge differences w/ trial:trueCue estimate
+trueCue_fitsWider %>% select(subID, `estimate_trial:trueCue`) %>%
+  left_join(., trueCue_diffValues, by='subID') %>%
+  summarise(subjectiveCue_corr = cor(subjectiveCueDiff, `estimate_trial:trueCue`, use= 'complete.obs'),
+            cueConfidence_corr = cor(cueConfidenceDiff, `estimate_trial:trueCue`, use= 'complete.obs'),
+            zConfidence_corr = cor(zConfidenceDiff, `estimate_trial:trueCue`, use= 'complete.obs'),
+            cueDiff_corr = cor(cueDiffDiff, `estimate_trial:trueCue`, use= 'complete.obs'))
+
+#df with just cueCorrs and subID
+cueCorrs <- df_est %>% group_by(subID) %>% filter(subID !=33)%>% select(cueCorr) %>% unique()
+
+cor(trueCue_fitsWider$`estimate_trial:trueCue`, cueCorrs$cueCorr)
+
+```
+
+## correlation between cueIdx RTs slopes during learning & explicit report behavior
+```{r}
+# cueIdx_fitsWider <- cueIdx_fits %>% pivot_wider(id_cols = subID, names_from = term, values_from=c(estimate, statistic, p.value))
+```
+
+
+## individual correlations with different outcome variables of interest
+```{r}
+coef_trueCue <- df_trueCue_stats %>%
+  select(subID, term, estimate) %>%
+  pivot_wider(names_from = term, values_from = estimate)
+
+coef_cueIdx <- df_cueIdx_stats %>%
+  select(subID, term, estimate) %>%
+  pivot_wider(names_from = term, values_from = estimate)
+
+trueCue_full <- inner_join(coef_trueCue, df_est, by = "subID")
+cueIdx_full  <- inner_join(coef_cueIdx,  df_est, by = "subID")
+
+cor_test_matrix <- function(full_df, outcome_vars, exclude = "subID") {
+  coef_vars <- setdiff(names(full_df), c(exclude, outcome_vars))
+  
+  #numeric columns
+  full_df[coef_vars] <- lapply(full_df[coef_vars], function(x) as.numeric(as.character(x)))
+  full_df[outcome_vars] <- lapply(full_df[outcome_vars], function(x) as.numeric(as.character(x)))
+  
+  cor_matrix <- matrix(NA, nrow = length(coef_vars), ncol = length(outcome_vars),
+                       dimnames = list(coef_vars, outcome_vars))
+  p_matrix <- cor_matrix
+  
+  for (coef in coef_vars) {
+    for (outcome in outcome_vars) {
+      x <- full_df[[coef]]
+      y <- full_df[[outcome]]
+      valid <- complete.cases(x, y)
+      if (sum(valid) >= 3) {  
+        test <- cor.test(x[valid], y[valid])
+        cor_matrix[coef, outcome] <- test$estimate
+        p_matrix[coef, outcome] <- test$p.value
+      }
+    }
+  }
+  
+  list(correlation = cor_matrix, p.value = p_matrix)
+}
+
+outcome_vars <- c("cueDiff", "cueCorr", "cueConfidence", "subjectiveCue")
+
+trueCue_corrs <- cor_test_matrix(trueCue_full, outcome_vars)
+cueIdx_corrs  <- cor_test_matrix(cueIdx_full,  outcome_vars)
+
+trueCue_corrs$correlation     # Correlations: trueCue model
+trueCue_corrs$p.value         # P-values
+
+cueIdx_corrs$correlation      # Correlations: cueIdx model
+cueIdx_corrs$p.value          # P-values
+
+# Save correlation matrices
+# write.csv(trueCue_corrs$correlation, "trueCue_correlations_matrix.csv", row.names = TRUE)
+# write.csv(cueIdx_corrs$correlation,  "cueIdx_correlations_matrix.csv",  row.names = TRUE)
+
+# Save p-value matrices
+# write.csv(trueCue_corrs$p.value, "trueCue_pvalues_matrix.csv", row.names = TRUE)
+# write.csv(cueIdx_corrs$p.value,  "cueIdx_pvalues_matrix.csv",  row.names = TRUE)
+
+```
+
+## heatmap of correlations
+```{r}
+#trueCue
+trueCue_matrix <- read.csv("trueCue_correlations_matrix.csv", row.names = 1)
+melted_df <- melt(as.matrix(trueCue_matrix)) %>%
+  transform(Var1 = gsub("cueName|block|condition", "", Var1)) %>%
+  transform(Var1 = trimws(Var1))
+
+ggplot(melted_df, aes(x = Var2, y = Var1, fill = value)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(value, 2)), color = "black", size = 3)  + 
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", 
+                       midpoint = 0, limit = c(-1, 1), space = "Lab",
+                       name = "Correlation") +
+  theme_minimal() +
+  labs(title = "Heatmap: Correlation between Regression Coefficients and Outcomes",
+       x = "Outcome Variable", y = "Coefficient Term") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+#cueIdx
+cueIdx_matrix <- read.csv("cueIdx_correlations_matrix.csv", row.names = 1)
+melted_df2 <- melt(as.matrix(cueIdx_matrix))%>%
+  transform(Var1 = gsub("cueName|block|condition", "", Var1)) %>%
+  transform(Var1 = trimws(Var1))
+
+ggplot(melted_df2, aes(x = Var2, y = Var1, fill = value)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(value, 2)), color = "black", size = 3)  + 
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", 
+                       midpoint = 0, limit = c(-1, 1), space = "Lab",
+                       name = "Correlation") +
+  theme_minimal() +
+  labs(title = "Heatmap: Correlation between Regression Coefficients and Outcomes",
+       x = "Outcome Variable", y = "Coefficient Term") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+# correlation over all
+
+aggregate datasets
+merging datasets by subject ( thought it would be interesting to compare variables in different stages of testing) 
+```{r}
+df_est_agg <- df_est %>%
+  group_by(subID) %>%
+  summarise(
+    subjectiveCue = mean(subjectiveCue, na.rm = TRUE),
+    cueConfidence = mean(cueConfidence, na.rm = TRUE),
+    cueCorr = first(cueCorr), 
+    cueDiff = mean(cueDiff, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+#df_inf aggregate
+df_inf_agg <- df_inf %>%
+  group_by(subID) %>%
+  summarise(
+    inference_RT = mean(RT, na.rm = TRUE),
+    confidence_rating = mean(confidence, na.rm = TRUE),
+    confidence_RT = mean(confRT, na.rm = TRUE),
+    .groups = 'drop'
+  )
+
+combined_data <- df_est_agg %>%
+  full_join(df_inf_agg, by = "subID")
+
+```
+
+## correlation martix
+```{r}
+# Select variables
+outcome_vars <- combined_data %>%
+  select(subjectiveCue, cueConfidence, cueDiff, cueCorr, 
+         inference_RT, confidence_rating, confidence_RT) 
+
+# Correlation matrix
+cor_matrix <- cor(outcome_vars, use = "complete.obs")
+
+print(cor_matrix)
+#compute p vals
+p_matrix <- outcome_vars %>% 
+  as.matrix() %>%
+  rcorr()
+```
+
+## correlation map
+```{r}
+# Convert correlation matrix to long format
+cor_melted <- data.frame(
+  Var1 = rep(rownames(cor_matrix), ncol(cor_matrix)),
+  Var2 = rep(colnames(cor_matrix), each = nrow(cor_matrix)),
+  value = as.vector(cor_matrix)
+)
+
+# Create heatmap
+ggplot(cor_melted, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2)), color = "black", size = 3) +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                       midpoint = 0, limit = c(-1, 1), name = "Correlation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Correlation Heatmap", x = "", y = "") 
+```
+
+
+
+
