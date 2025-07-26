@@ -4,16 +4,14 @@ output: html_document
 date: "2025-07-24"
 ---
 
-load packages
 
-```{r, echo=FALSE, include=FALSE}
+
+```{r load packages, echo=FALSE, include=FALSE}
 library(tidyverse)
 library(lme4)
 library(lmerTest)
 library(performance)
 library(patchwork)
-library(dplyr)
-library(ggplot2)
 library(emmeans)
 library(corrplot)
 library(Hmisc)
@@ -21,161 +19,126 @@ library(broom)
 library(corrr)
 library(reshape2)
 ```
-loading and tidying data
 
-```{r message=FALSE, warning=FALSE}
+
+```{r load data, message=FALSE, warning=FALSE}
 # learning data
-df_learn <- read.csv('~/learning.csv')
+df_learn <- read.csv('data/learning.csv')
 df_learn <- df_learn %>%
-  mutate(condition = ifelse(subID < 55, 'condition_80cue', 'condition_65cue'),
-         scaledTrial = as.numeric(scale(log(trial))), 
-         scaledImgLockedRT = as.numeric(scale(imgLockedRT)),
-         cueIdx = factor(cueIdx, levels=c(3,1,2), labels=c('neutral', 'non-neutral1', 'non-neutral2')))
-
-# estimates data
-df_est <- read.csv('~/Downloads/estimates.csv') %>%
-group_by(subID) %>%
-  mutate(zconf = as.numeric(scale(cueConfidence))) %>%
+  filter(trial < 91) %>%
+  mutate(scaledTrial = as.numeric(scale(trial)),
+         scaledLogTrial = as.numeric(scale(log(trial))), 
+         cueIdx = factor(cueIdx, levels=c(1,2,3), labels=c('non-neutral1', 'non-neutral2', 'neutral'))) %>%
+  group_by(subID) %>%
+  mutate(scaledImgLockedRT = as.numeric(scale(imgLockedRT))) %>%
   ungroup()
 
-df_est$cueDiff <- df_est$subjectiveCue - df_est$trueCue 
-
-## CueCorr column
-correlations <- df_est %>%
+# estimates data
+df_est <- read.csv('data/estimates.csv')
+df_est <- df_est %>%
   group_by(subID) %>%
-  summarise(corr = cor(trueCue, subjectiveCue, use = "complete.obs"))
-  
-df_est <- merge(df_est, correlations, by = "subID")
-df_est$cueCorr <- df_est$corr
-df_est$corr <- NULL
-
-## conditions column
-df_est$condition <- ifelse(df_est$subID < 55, '80/50_cue', '65/50_cue')
+  mutate(zCueConf = as.numeric(scale(cueConfidence)),
+         cueCorr = cor(trueCue, subjectiveCue),
+         cueDiff = subjectiveCue - trueCue) %>%
+  ungroup()
 
 # inference data
-df_inf <- read.csv('~/Downloads/inference_test.csv') %>%
+df_inf <- read.csv('data/inference_test_tidy.csv') %>% select(-X)
+df_inf <- df_inf %>%
   group_by(subID) %>%
-  mutate (zconfRTs = as.numeric(scale(confRT)))
+  mutate(zconf = scale(confidence),
+         zconfRT = scale(confRT))
 ```
 
-# slopes of regression lines during learning
+# slope of regression lines during learning: all subjects
 
-### truecue as predictor
+## predicting z-scored image-locked RT using `trueCue * scaledLogTrial`, controlling for response finger using `imageIdx` as a regressor
 ```{r}
-# model
-model1 <- lm(formula = imgLockedRT ~ scaledTrial * trueCue, data = df_learn)
-summary(model1)
+# fit model
+m <- lm(scaledImgLockedRT ~ scaledLogTrial * trueCue + imageIdx, data = df_learn)
+# plot trends
+emmip(m, trueCue ~ scaledLogTrial, CIs=T, at=list(trueCue = unique(df_learn$trueCue),
+                                                    scaledLogTrial = range(df_learn$scaledLogTrial))) + 
+  geom_hline(yintercept=mean(df_learn$scaledImgLockedRT,na.rm=T)) + labs(y='scaledimgLockedRT', title = 'fitted trends: scaledimgLockedRT ~ scaledLogTrial * trueCue')
+# view summary
+summary(m) 
+```
+- significant main effect of trueCue: people are faster for more predictive trueCues
+- potentially trending interaction between trial & trueCue: people get (marginally) faster for more predictive trueCues over the course of learning
+
+# empirical plots: scaledImgLockedRT by scaledLogTrial
+```{r}
+df_learn %>%
+  mutate(trueCue = factor(trueCue))%>%
+  ggplot(aes(x=scaledLogTrial, y=scaledImgLockedRT, color=trueCue, fill=trueCue)) +
+  theme_bw() + facet_wrap(~subID, nrow=4) + geom_hline(yintercept = 0, color='gray30') +
+  geom_point(size=0.5, alpha=0.7) + stat_smooth(method='lm', linewidth=0.75)
 ```
 
-### cueIdx as predictor
+# fit regression model for each subject, extract simple slopes for trueCue
 ```{r}
-# model
-model3 <- lm(formula = imgLockedRT ~ scaledTrial * cueIdx, data = df_learn)
-summary(model3)
-```
-
-# individual slopes
-```{r}
-trueCue_stats <- list()
-cueIdx_stats <- list()
+trueCue_coefs <- list()
+trueCue_trends <- list()
 
 for(sub_id in unique(df_learn$subID)) {
-  df_sub <- df_learn[df_learn$subID == sub_id, ]
-  # the tidy/dplyr version
-  # df_sub <- df_learn %>% filter(subID == sub_id)
-  model_sub <- lm(scaledImgLockedRT ~ trial * trueCue + cueIdx, data = df_sub)
-  model_cat <- lm(scaledImgLockedRT ~ trial * cueIdx, data = df_sub)
-  
+  df_sub <- df_learn %>% filter(subID == sub_id)
+  model_sub <- lm(scaledImgLockedRT ~ scaledLogTrial * trueCue + imageIdx, data = df_sub)
+
   # Get tidy results with coefficients, t-values, and p-values
   tidy_true <- tidy(model_sub)
-  tidy_cueIdx <- tidy(model_cat)
-  
   # Add subject ID
   tidy_true$subID <- sub_id
-  tidy_cueIdx$subID <- sub_id
   
+  # get the emtrends
+  trends <- emtrends(model_sub, ~ trueCue, var='scaledLogTrial', at=list(trueCue=unique(df_sub$trueCue))) %>% 
+    as.data.frame() %>% mutate(subID = sub_id)
+
   # Add to lists
-  trueCue_stats[[length(trueCue_stats) + 1]] <- tidy_true
-  cueIdx_stats[[length(cueIdx_stats) + 1]] <- tidy_cueIdx
+  trueCue_coefs[[length(trueCue_coefs) + 1]] <- tidy_true
+  trueCue_trends[[length(trueCue_trends) + 1]] <- trends
 }
 
 # Combine all results
-df_trueCue_stats <- bind_rows(trueCue_stats)
-df_cueIdx_stats <- bind_rows(cueIdx_stats)
+df_trueCue_coefs <- bind_rows(trueCue_coefs)
+df_trueCue_trends <- bind_rows(trueCue_trends)
 
 # Reorder columns to put subID first
-df_trueCue_stats <- df_trueCue_stats[, c("subID", "term", "estimate", "std.error", "statistic", "p.value")]
-df_cueIdx_stats <- df_cueIdx_stats[, c("subID", "term", "estimate", "std.error", "statistic", "p.value")]
-
+# df_trueCue_coefs <- df_trueCue_coefs[, c("subID", "term", "estimate", "std.error", "statistic", "p.value")]
 ```
-
-## measures of implicit learning of true probailities 
+ 
+ 
+# make simple plots of correlations of interest
+## correlation between learning interaction coefficient & cueCorr
 ```{r}
-# kept getting only .65 contrasts so set trueCue as factor
-# df_learn$trueCue_factor <- factor(df_learn$trueCue,
-                                  #levels = c(0.5, 0.65, 0.8))
-trueCue_contrasts <- list()
-trueCue_trends <- list()
+# make dataframe with just the interaction coefficients
+df_trueCue_interaction_coefs <- df_trueCue_coefs %>% filter(term == 'scaledLogTrial:trueCue') 
 
-for(subID in unique(df_learn$subID)) {
-  df_sub <- df_learn[df_learn$subID == subID, ]
+# plot
+df_est %>% select(cueCorr, subID) %>% unique() %>%
+  left_join(., df_trueCue_interaction_coefs, by='subID') %>%
+  ggplot(aes(x=estimate, y=cueCorr)) + theme_bw() + geom_point() +
+  stat_smooth(method='lm') + labs(x='interaction coefficient value')
 
-#if(length(unique(df_sub$trueCue)) > 1)  {
-  sub_model <- lm(scaledImgLockedRT ~ scaledTrial * trueCue + imageIdx, df_sub)
-  sub_trends <- emtrends(sub_model, pairwise ~ trueCue, var='scaledTrial', at=list(trueCue=unique(df_sub$trueCue)))
-
-  # get contrast estimates
-  contrasts_df <- as.data.frame(sub_trends$contrasts)
-  contrasts_df$subID <-subID
-  
-  trends_df <- as.data.frame(sub_trends$emtrends)
-  trends_df$subID <- subID
-  
-  trueCue_contrasts[[length(trueCue_contrasts) + 1]] <- contrasts_df
-  trueCue_trends[[length(trueCue_trends) + 1]] <- trends_df
- # }
-
-}
-# combine contrast results
-all_contrasts <- bind_rows(trueCue_contrasts)
-
-all_trends <- bind_rows(trueCue_trends)
-
+# fit linear model
+df_est %>% select(cueCorr, subID) %>% unique() %>%
+  left_join(., df_trueCue_interaction_coefs, by='subID') %>%
+  lm(cueCorr ~ estimate, .) %>% summary()
 ```
 
+## correlation between simple slope for each trueCue and the average cueDiff for that trueCue
+```{r}
 
+df_cueDiffs <- df_est %>% group_by(subID, trueCue) %>% summarise(meanDiff = mean(cueDiff, na.rm=T))
 
-### plots of RTs across learning: trueCue
-```{r, fig.width=10, fig.height=6, warning=FALSE, message=FALSE}
+# make a plot
+df_cueDiffs %>% left_join(., df_trueCue_trends, by=c('subID', 'trueCue')) %>%
+  mutate(trueCue = factor(trueCue, levels=c(0.5, 0.65, 0.8))) %>%
+  ggplot(., aes(x=scaledLogTrial.trend, y=meanDiff, color=trueCue, fill=trueCue)) +
+  theme_bw() + geom_point() + stat_smooth(method = 'lm') + labs(y = 'average cueDiff', x = 'simple effect of cue')
 
-df_learn %>%
-  filter(trial < 91) %>%
-  mutate(trueCue = factor(trueCue))%>%
-  ggplot(aes(x=trial, y=scaledImgLockedRT, color=trueCue, fill=trueCue)) +
-  theme_bw() + facet_wrap(~subID, nrow=4) + geom_hline(yintercept = 0, color='gray30') +
-  geom_point(size=0.5, alpha=0.7) + stat_smooth(method='lm', linewidth=0.75)
-
-df_trueCue_stats %>%
-  filter(term == 'trial' | term == 'trueCue' | term == 'trial:trueCue') %>%
-  select(subID, term, estimate, p.value) %>%
-  pivot_wider(id_cols=subID, names_from=term, values_from=c(estimate, p.value)) %>%
-  round(., digits=3)
-```
-
-## plots of RTs across learning: cueIdx
-```{r, fig.width=10, fig.height=6, warning=FALSE, message=FALSE}
-
-df_learn %>%
-  filter(trial < 91) %>%
-  ggplot(aes(x=trial, y=scaledImgLockedRT, color=cueIdx, fill=cueIdx)) +
-  theme_bw() + facet_wrap(~subID, nrow=4) + geom_hline(yintercept = 0, color='gray30') +
-  geom_point(size=0.5, alpha=0.7) + stat_smooth(method='lm', linewidth=0.75)
-
-df_cueIdx_stats %>%
-  filter(term == 'trial' | term == 'cueIdx' | term == 'trial:cueIdx') %>%
-  select(subID, term, estimate, p.value) %>%
-  pivot_wider(id_cols=subID, names_from=term, values_from=c(estimate, p.value)) %>%
-  round(., digits=3)
+# fit a linear model
+df_cueDiffs %>% left_join(., df_trueCue_trends, by=c('subID', 'trueCue')) %>%
+  lm(meanDiff ~ scaledLogTrial.trend*trueCue, .) %>% summary()
 ```
 
 
