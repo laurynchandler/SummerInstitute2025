@@ -117,7 +117,7 @@ df_trueCue_interaction_coefs <- df_trueCue_coefs %>% filter(term == 'scaledLogTr
 df_est %>% select(cueCorr, subID) %>% unique() %>%
   left_join(., df_trueCue_interaction_coefs, by='subID') %>%
   ggplot(aes(x=estimate, y=cueCorr)) + theme_bw() + geom_point() +
-  stat_smooth(method='lm') + labs(x='interaction coefficient value')
+  stat_smooth(method='lm') + labs(x='scaledLogTrial*trueCue interaction coefficient')
 
 # fit linear model
 df_est %>% select(cueCorr, subID) %>% unique() %>%
@@ -133,12 +133,52 @@ df_cueDiffs <- df_est %>% group_by(subID, trueCue) %>% summarise(meanDiff = mean
 # make a plot
 df_cueDiffs %>% left_join(., df_trueCue_trends, by=c('subID', 'trueCue')) %>%
   mutate(trueCue = factor(trueCue, levels=c(0.5, 0.65, 0.8))) %>%
-  ggplot(., aes(x=scaledLogTrial.trend, y=meanDiff, color=trueCue, fill=trueCue)) +
-  theme_bw() + geom_point() + stat_smooth(method = 'lm') + labs(y = 'average cueDiff', x = 'simple effect of cue')
+  ggplot(., aes(x=scaledLogTrial.trend, y=meanDiff, color=trueCue, fill=trueCue)) + facet_wrap(~trueCue) + 
+  theme_bw() + geom_point() + stat_smooth(method = 'lm') + labs(y = 'average cueDiff', x = 'effect of trial on scaledImgLockedRT')
 
 # fit a linear model
 df_cueDiffs %>% left_join(., df_trueCue_trends, by=c('subID', 'trueCue')) %>%
   lm(meanDiff ~ scaledLogTrial.trend*trueCue, .) %>% summary()
+```
+## correlation between simple slope for each trueCue and the reported value for that cue
+```{r}
+# plot
+df_est %>% left_join(., df_trueCue_trends, by=c('subID', 'trueCue')) %>%
+  mutate(trueCue = factor(trueCue, levels=c(0.5, 0.65, 0.8))) %>%
+  ggplot(., aes(x=scaledLogTrial.trend, y=subjectiveCue, color=trueCue, fill=trueCue)) + facet_wrap(~trueCue) + 
+  theme_bw() + geom_point() + stat_smooth(method = 'lm') + labs(y = 'subjectiveCue', x = 'slope of scaledLogTrial')
+
+# fit linear model
+df_est %>% left_join(., df_trueCue_trends, by=c('subID', 'trueCue')) %>%
+  lm(subjectiveCue ~ scaledLogTrial.trend*trueCue, .) %>% summary()
+
+# compute correlation
+df_est %>% left_join(., df_trueCue_trends, by=c('subID', 'trueCue')) %>%
+  select(scaledLogTrial.trend, trueCue, subjectiveCue) %>%
+  group_by(trueCue) %>%
+  summarise(linear_corr = cor(scaledLogTrial.trend, subjectiveCue, method='pearson'),
+            nonlinear_corr = cor(scaledLogTrial.trend, subjectiveCue, method='spearman'))
+```
+
+## correlation between simple slope for each trueCue and the average confidence for that cue
+```{r}
+# plot
+df_est %>% left_join(., df_trueCue_trends, by=c('subID', 'trueCue')) %>%
+  mutate(trueCue = factor(trueCue, levels=c(0.5, 0.65, 0.8))) %>%
+  ggplot(., aes(x=scaledLogTrial.trend, y=zCueConf, color=trueCue, fill=trueCue)) + geom_hline(yintercept = 0) +
+  facet_wrap(~trueCue) + 
+  theme_bw() + geom_point() + stat_smooth(method = 'lm') + labs(y = 'zCueConfidence', x = 'slope of scaledLogTrial')
+
+# fit linear model
+df_est %>% left_join(., df_trueCue_trends, by=c('subID', 'trueCue')) %>%
+  lm(zCueConf ~ scaledLogTrial.trend*trueCue, .) %>% summary()
+
+# compute correlation
+df_est %>% left_join(., df_trueCue_trends, by=c('subID', 'trueCue')) %>%
+  select(scaledLogTrial.trend, trueCue, zCueConf) %>%
+  group_by(trueCue) %>%
+  summarise(linear_corr = cor(scaledLogTrial.trend, zCueConf, method='pearson', use='na.or.complete'),
+            nonlinear_corr = cor(scaledLogTrial.trend, zCueConf, method='spearman', use='na.or.complete'))
 ```
 
 
