@@ -1,0 +1,140 @@
+---
+title: "learningAnalysis_examples"
+author: "ari k + lauryn c"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+```{r, echo=FALSE, include=FALSE}
+library(tidyverse)
+library(lme4)
+library(lmerTest)
+library(performance)
+library(patchwork)
+library(emmeans)
+library(corrplot)
+library(Hmisc)
+library(broom)
+library(corrr)
+library(reshape2)
+```
+
+## load & tidy data
+```{r message=FALSE, warning=FALSE}
+# learning data
+df_learn <- read.csv('data/learning.csv')
+df_learn <- df_learn %>%
+  filter(trial < 91) %>%
+  mutate(scaledTrial = as.numeric(scale(trial)),
+         scaledLogTrial = as.numeric(scale(log(trial))), 
+         cueIdx = factor(cueIdx, levels=c(3,1,2), labels=c('neutral', 'non-neutral1', 'non-neutral2'))) %>%
+  group_by(subID) %>%
+  mutate(scaledImgLockedRT = as.numeric(scale(imgLockedRT))) %>%
+  ungroup()
+
+# estimates data
+df_est <- read.csv('data/estimates.csv')
+df_est <- df_est %>%
+  group_by(subID) %>%
+  mutate(zCueConf = as.numeric(scale(cueConfidence)),
+         cueCorr = cor(trueCue, subjectiveCue),
+         cueDiff = subjectiveCue - trueCue) %>%
+  ungroup()
+
+# inference data
+df_inf <- read.csv('data/inference_test_tidy.csv') %>% select(-X)
+df_inf <- df_inf %>%
+  group_by(subID) %>%
+  mutate(zconf = scale(confidence),
+         zconfRT = scale(confRT))
+```
+
+### what does z-scoring confidence ratings (or any other variable) do?
+```{r}
+
+rawConfidence_plot <- ggplot(df_inf, aes(confidence)) + theme_bw() + geom_histogram(bins=4) + labs(title='raw confidence')
+zConfidence_plot <- ggplot(df_inf, aes(zconf)) + theme_bw() + geom_histogram(bins=4) + labs(title = 'z-confidence')
+rawConfidence_plot + zConfidence_plot
+
+```
+
+### what does z-scoring and log-transforming trial do?
+```{r}
+
+rawTrial_plot <- ggplot(df_learn, aes(x=trial)) + theme_bw() + geom_histogram(bins=50)
+zTrial_plot <- ggplot(df_learn, aes(x=scale(trial))) + theme_bw() + geom_histogram(bins=50)
+zlogTrial_plot <- ggplot(df_learn, aes(x=log(scale(trial)))) + theme_bw() + geom_histogram(bins=50)
+
+rawTrial_plot + zTrial_plot + zlogTrial_plot
+```
+
+### did all of our subjects have the same amount of learning trials?
+```{r}
+
+df_learn %>% group_by(subID) %>% summarise(nTrial = max(trial)) %>% ggplot(., aes(x=subID, y=nTrial)) + geom_col()
+
+```
+
+looks like most of them do! there are a lot of ways that we could approach handling the subjects who have more than average trials. for our purposes, I think it makes the most sense to just put an upper bound on nTrials so that we are only analyzing the first 90 trials for everyone (since 90 trials is the most common amount // what we intended when designing the experiment)
+
+---
+
+# comparing different regression models for group-level RT trends during learning
+
+### trueCue * scaledTrial as predictor for imgLockedRT
+```{r}
+# model
+model1 <- lm(imgLockedRT ~ scaledTrial * trueCue + imageIdx, data = df_learn)
+emmip(model1, trueCue ~ scaledTrial, CIs=T, at=list(trueCue = unique(df_learn$trueCue),
+                                                    scaledTrial = range(df_learn$scaledTrial))) + 
+  geom_hline(yintercept=mean(df_learn$imgLockedRT, na.rm=T)) + labs(y='imgLockedRT', title = 'imgLockedRT ~ scaledTrial * trueCue')
+summary(model1)
+```
+
+### trueCue * scaledLogTrial as predictor for imgLockedRT
+```{r}
+model2 <- lm(imgLockedRT ~ scaledLogTrial * trueCue + imageIdx, data = df_learn)
+emmip(model2, trueCue ~ scaledLogTrial, CIs=T, at=list(trueCue = unique(df_learn$trueCue),
+                                                    scaledLogTrial = range(df_learn$scaledLogTrial))) + 
+  geom_hline(yintercept=mean(df_learn$imgLockedRT, na.rm=T)) + labs(y='imgLockedRT', title = 'imgLockedRT ~ scaledLogTrial * trueCue')
+summary(model2)
+```
+
+### trueCue * scaledTrial as predictor for scaledimgLockedRT
+```{r}
+# fit model
+model3 <- lm(scaledImgLockedRT ~ scaledTrial * trueCue + imageIdx, data = df_learn)
+# plot trends
+emmip(model3, trueCue ~ scaledTrial, CIs=T, at=list(trueCue = unique(df_learn$trueCue),
+                                                    scaledTrial = range(df_learn$scaledTrial))) + 
+  geom_hline(yintercept=mean(df_learn$scaledImgLockedRT,na.rm=T)) + labs(y='scaledimgLockedRT', title = 'scaledimgLockedRT ~ scaledTrial * trueCue')
+# view summary
+summary(model3)
+```
+
+
+### trueCue * scaledLogTrial as predictor for scaledimgLockedRT
+```{r}
+# fit model
+model4 <- lm(scaledImgLockedRT ~ scaledLogTrial * trueCue + imageIdx, data = df_learn)
+# plot trends
+emmip(model4, trueCue ~ scaledLogTrial, CIs=T, at=list(trueCue = unique(df_learn$trueCue),
+                                                    scaledLogTrial = range(df_learn$scaledLogTrial))) + 
+  geom_hline(yintercept=mean(df_learn$scaledImgLockedRT,na.rm=T)) + labs(y='scaledimgLockedRT', title = 'scaledimgLockedRT ~ scaledLogTrial * trueCue')
+# view summary
+summary(model4)
+```
+
+## example code: plotting individual subject fits & their emtrends
+```{r}
+summary(model_sub)
+emtrends(model_sub, pairwise ~ trueCue, var='scaledLogTrial', at=list(trueCue=unique(df_sub$trueCue)))
+# how is scaledTrial.trend computed?
+# Slope = beta_scaledTrial + beta_scaledTrial:trueCue * (0.5) --> for the 0.5 cue
+# Slope = beta_scaledTrial + beta_scaledTrial:trueCue * (0.65) --> for the 0.65 cue
+
+emmip(model_sub, trueCue ~ scaledLogTrial, at=list(trueCue=unique(df_sub$trueCue), 
+                                                scaledLogTrial = range(df_sub$scaledLogTrial)), plotit=T, CIs=T)
+
+```
