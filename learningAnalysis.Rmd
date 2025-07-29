@@ -1,7 +1,7 @@
 ---
-title: "learningAnalysis_07_24"
+title: "learningAnalysis_07_29"
 output: html_document
-date: "2025-07-24"
+date: "2025-07-29"
 ---
 
 
@@ -265,7 +265,7 @@ df_inf %>%
   mutate(trueCue = factor(trueCue, levels=c(0.5, 0.65, 0.8))) %>%
   ggplot(., aes(x=scaledLogTrial.trend, y=meanRate, color=factor(congCue), fill=factor(congCue))) + geom_hline(yintercept = 0) +
   facet_grid(~congCue) + 
-  theme_bw() + geom_point(aes(shape=accuracyFactor)) + stat_smooth(aes(linetype=accuracyFactor), method = 'lm') + labs(y = 'RTs during inference (decision making)', x = 'z confidence rating')
+  theme_bw() + geom_point(aes(shape=accuracyFactor)) + stat_smooth(aes(linetype=accuracyFactor), method = 'lm') + labs(y = 'confidence ratings during inference (decision making)', x = 'learning RT slope', title = 'zconfidence ratings by accuracy')
 
 ```
 
@@ -281,7 +281,7 @@ df_inf %>%
   mutate(trueCue = factor(trueCue, levels=c(0.5, 0.65, 0.8))) %>%
   ggplot(., aes(x=scaledLogTrial.trend, y=meanZconfRT, color=factor(congCue), fill=factor(congCue))) + geom_hline(yintercept = 0) +
   facet_grid(~congCue) + 
-  theme_bw() + geom_point(aes(shape=accuracyFactor)) + stat_smooth(aes(linetype=accuracyFactor), method = 'lm') + labs(y = 'RTs during inference (decision making)', x = 'confidence rating RTs')
+  theme_bw() + geom_point(aes(shape=accuracyFactor)) + stat_smooth(aes(linetype=accuracyFactor), method = 'lm') + labs(y = 'confidence ratings RTS during inference (decision making)', x = 'learning RT slope', title = 'confidence rating RTs by accuracy')
 
 ```
 ---
@@ -349,55 +349,55 @@ df_inf %>% left_join(., df_trueCue_trends, by=c('subID', 'trueCue')) %>%
 ```
 
 ## individual correlations with different outcome variables of interest
-```{r}
-coef_trueCue <- df_trueCue_stats %>%
-  select(subID, term, estimate) %>%
-  pivot_wider(names_from = term, values_from = estimate)
-
-coef_cueIdx <- df_cueIdx_stats %>%
-  select(subID, term, estimate) %>%
-  pivot_wider(names_from = term, values_from = estimate)
-
-trueCue_full <- inner_join(coef_trueCue, df_est, by = "subID")
-cueIdx_full  <- inner_join(coef_cueIdx,  df_est, by = "subID")
-
-cor_test_matrix <- function(full_df, outcome_vars, exclude = "subID") {
-  coef_vars <- setdiff(names(full_df), c(exclude, outcome_vars))
-  
-  #numeric columns
-  full_df[coef_vars] <- lapply(full_df[coef_vars], function(x) as.numeric(as.character(x)))
-  full_df[outcome_vars] <- lapply(full_df[outcome_vars], function(x) as.numeric(as.character(x)))
-  
-  cor_matrix <- matrix(NA, nrow = length(coef_vars), ncol = length(outcome_vars),
-                       dimnames = list(coef_vars, outcome_vars))
-  p_matrix <- cor_matrix
-  
-  for (coef in coef_vars) {
-    for (outcome in outcome_vars) {
-      x <- full_df[[coef]]
-      y <- full_df[[outcome]]
-      valid <- complete.cases(x, y)
-      if (sum(valid) >= 3) {  
-        test <- cor.test(x[valid], y[valid])
-        cor_matrix[coef, outcome] <- test$estimate
-        p_matrix[coef, outcome] <- test$p.value
-      }
-    }
-  }
-  
-  list(correlation = cor_matrix, p.value = p_matrix)
-}
-
-outcome_vars <- c("cueDiff", "cueCorr", "cueConfidence", "subjectiveCue")
-
-trueCue_corrs <- cor_test_matrix(trueCue_full, outcome_vars)
-cueIdx_corrs  <- cor_test_matrix(cueIdx_full,  outcome_vars)
-
-trueCue_corrs$correlation     # Correlations: trueCue model
-trueCue_corrs$p.value         # P-values
-
-cueIdx_corrs$correlation      # Correlations: cueIdx model
-cueIdx_corrs$p.value          # P-values
+```{r, include=FALSE}
+# coef_trueCue <- df_trueCue_stats %>%
+#   select(subID, term, estimate) %>%
+#   pivot_wider(names_from = term, values_from = estimate)
+# 
+# coef_cueIdx <- df_cueIdx_stats %>%
+#   select(subID, term, estimate) %>%
+#   pivot_wider(names_from = term, values_from = estimate)
+# 
+# trueCue_full <- inner_join(coef_trueCue, df_est, by = "subID")
+# cueIdx_full  <- inner_join(coef_cueIdx,  df_est, by = "subID")
+# 
+# cor_test_matrix <- function(full_df, outcome_vars, exclude = "subID") {
+#   coef_vars <- setdiff(names(full_df), c(exclude, outcome_vars))
+#   
+#   #numeric columns
+#   full_df[coef_vars] <- lapply(full_df[coef_vars], function(x) as.numeric(as.character(x)))
+#   full_df[outcome_vars] <- lapply(full_df[outcome_vars], function(x) as.numeric(as.character(x)))
+#   
+#   cor_matrix <- matrix(NA, nrow = length(coef_vars), ncol = length(outcome_vars),
+#                        dimnames = list(coef_vars, outcome_vars))
+#   p_matrix <- cor_matrix
+#   
+#   for (coef in coef_vars) {
+#     for (outcome in outcome_vars) {
+#       x <- full_df[[coef]]
+#       y <- full_df[[outcome]]
+#       valid <- complete.cases(x, y)
+#       if (sum(valid) >= 3) {  
+#         test <- cor.test(x[valid], y[valid])
+#         cor_matrix[coef, outcome] <- test$estimate
+#         p_matrix[coef, outcome] <- test$p.value
+#       }
+#     }
+#   }
+#   
+#   list(correlation = cor_matrix, p.value = p_matrix)
+# }
+# 
+# outcome_vars <- c("cueDiff", "cueCorr", "cueConfidence", "subjectiveCue")
+# 
+# trueCue_corrs <- cor_test_matrix(trueCue_full, outcome_vars)
+# cueIdx_corrs  <- cor_test_matrix(cueIdx_full,  outcome_vars)
+# 
+# trueCue_corrs$correlation     # Correlations: trueCue model
+# trueCue_corrs$p.value         # P-values
+# 
+# cueIdx_corrs$correlation      # Correlations: cueIdx model
+# cueIdx_corrs$p.value          # P-values
 
 # Save correlation matrices
 # write.csv(trueCue_corrs$correlation, "trueCue_correlations_matrix.csv", row.names = TRUE)
@@ -411,77 +411,77 @@ cueIdx_corrs$p.value          # P-values
 
 # aggregate datasets
 merging datasets by subject ( thought it would be interesting to compare variables in different stages of testing) 
-```{r}
-df_est_agg <- df_est %>%
-  group_by(subID) %>%
-  summarise(
-    subjectiveCue = mean(subjectiveCue, na.rm = TRUE),
-    cueConfidence = mean(cueConfidence, na.rm = TRUE),
-    cueCorr = first(cueCorr), 
-    cueDiff = mean(cueDiff, na.rm = TRUE),
-    .groups = 'drop'
-  )
-
-#df_inf aggregate
-df_inf_agg <- df_inf %>%
-  group_by(subID) %>%
-  summarise(
-    inference_zRT = mean(zlogRT, na.rm = TRUE),
-    confidence_rating = mean(confidence, na.rm = TRUE),
-    confidence_zRT = mean(zconfRTs, na.rm = TRUE),
-    .groups = 'drop'
-  )
-
-combined_data <- df_est_agg %>%
-  full_join(df_inf_agg, by = "subID")
+```{r, include=FALSE}
+# df_est_agg <- df_est %>%
+#   group_by(subID) %>%
+#   summarise(
+#     subjectiveCue = mean(subjectiveCue, na.rm = TRUE),
+#     cueConfidence = mean(cueConfidence, na.rm = TRUE),
+#     cueCorr = first(cueCorr), 
+#     cueDiff = mean(cueDiff, na.rm = TRUE),
+#     .groups = 'drop'
+#   )
+# 
+# #df_inf aggregate
+# df_inf_agg <- df_inf %>%
+#   group_by(subID) %>%
+#   summarise(
+#     inference_zRT = mean(zlogRT, na.rm = TRUE),
+#     confidence_rating = mean(confidence, na.rm = TRUE),
+#     confidence_zRT = mean(zconfRTs, na.rm = TRUE),
+#     .groups = 'drop'
+#   )
+# 
+# combined_data <- df_est_agg %>%
+#   full_join(df_inf_agg, by = "subID")
 
 ```
 
 
 ## correlation martix
-```{r}
-# Select variables
-outcome_vars <- combined_data %>%
-  select(subjectiveCue, cueConfidence, cueDiff, cueCorr, 
-         inference_zRT, confidence_rating, confidence_zRT) 
-
-# Correlation matrix
-cor_matrix <- cor(outcome_vars, use = "complete.obs")
-
-# re order variables
-desired_order <- c("subjectiveCue", "cueDiff", "cueCorr", "cueConfidence","confidence_rating", "confidence_zRT","inference_zRT")
-
-# Reorder correlation matrix
-cor_matrix_reordered <- cor_matrix[desired_order, desired_order]
-
-print(cor_matrix_reordered)
-#compute p vals
-p_matrix <- outcome_vars %>% 
-  as.matrix() %>%
-  rcorr()
+```{r, include=FALSE}
+# # Select variables
+# outcome_vars <- combined_data %>%
+#   select(subjectiveCue, cueConfidence, cueDiff, cueCorr, 
+#          inference_zRT, confidence_rating, confidence_zRT) 
+# 
+# # Correlation matrix
+# cor_matrix <- cor(outcome_vars, use = "complete.obs")
+# 
+# # re order variables
+# desired_order <- c("subjectiveCue", "cueDiff", "cueCorr", "cueConfidence","confidence_rating", "confidence_zRT","inference_zRT")
+# 
+# # Reorder correlation matrix
+# cor_matrix_reordered <- cor_matrix[desired_order, desired_order]
+# 
+# print(cor_matrix_reordered)
+# #compute p vals
+# p_matrix <- outcome_vars %>% 
+#   as.matrix() %>%
+#   rcorr()
 ```
 
 ## correlation map
-```{r}
-# Convert correlation matrix to long format
-cor_melted <- data.frame(
-  Var1 = rep(rownames(cor_matrix_reordered), ncol(cor_matrix_reordered)),
-  Var2 = rep(colnames(cor_matrix_reordered), each = nrow(cor_matrix_reordered)),
-  value = as.vector(cor_matrix_reordered)
-)
-
-# factor levels to order variables
-cor_melted$Var1 <- factor(cor_melted$Var1, levels = desired_order)
-cor_melted$Var2 <- factor(cor_melted$Var2, levels = rev(desired_order))
-
-
-# Create heatmap
-ggplot(cor_melted, aes(x = Var1, y = Var2, fill = value)) +
-  geom_tile() +
-  geom_text(aes(label = round(value, 2)), color = "black", size = 3) +
-  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
-                       midpoint = 0, limit = c(-1, 1), name = "Correlation") +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-  labs(title = "Correlation Heatmap", x = "", y = "") 
+```{r, include = FALSE}
+# # Convert correlation matrix to long format
+# cor_melted <- data.frame(
+#   Var1 = rep(rownames(cor_matrix_reordered), ncol(cor_matrix_reordered)),
+#   Var2 = rep(colnames(cor_matrix_reordered), each = nrow(cor_matrix_reordered)),
+#   value = as.vector(cor_matrix_reordered)
+# )
+# 
+# # factor levels to order variables
+# cor_melted$Var1 <- factor(cor_melted$Var1, levels = desired_order)
+# cor_melted$Var2 <- factor(cor_melted$Var2, levels = rev(desired_order))
+# 
+# 
+# # Create heatmap
+# ggplot(cor_melted, aes(x = Var1, y = Var2, fill = value)) +
+#   geom_tile() +
+#   geom_text(aes(label = round(value, 2)), color = "black", size = 3) +
+#   scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+#                        midpoint = 0, limit = c(-1, 1), name = "Correlation") +
+#   theme_minimal() +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+#   labs(title = "Correlation Heatmap", x = "", y = "") 
 ```
