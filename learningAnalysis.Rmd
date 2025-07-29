@@ -211,7 +211,7 @@ df_inf %>%
   mutate(trueCue = factor(trueCue, levels=c(0.5, 0.65, 0.8))) %>%
   ggplot(., aes(x=scaledLogTrial.trend, y=meanRT, color=factor(congCue), fill=factor(congCue))) + geom_hline(yintercept = 0) +
   facet_grid(~congCue) + 
-  theme_bw() + geom_point() + stat_smooth(method = 'lm') + labs(y = 'RTs during inference (decision making)', x = 'learning RT slope')
+  theme_bw() + geom_point() + stat_smooth(method = 'lm') + labs(y = 'RTs during inference (decision making)', x = 'learning RT slope', title = 'effects on RTs independent of accuracy')
 
 # fit & plot linear model
 # df_inf %>% left_join(., df_trueCue_trends, by=c('subID', 'trueCue')) %>%
@@ -246,7 +246,7 @@ df_inf %>%
   mutate(trueCue = factor(trueCue, levels=c(0.5, 0.65, 0.8))) %>%
   ggplot(., aes(x=scaledLogTrial.trend, y=meanRT, color=factor(congCue), fill=factor(congCue))) + geom_hline(yintercept = 0) +
   facet_grid(~congCue) + 
-  theme_bw() + geom_point(aes(shape=accuracyFactor)) + stat_smooth(aes(linetype=accuracyFactor), method = 'lm') + labs(y = 'RTs during inference (decision making)', x = 'learning RT slope')
+  theme_bw() + geom_point(aes(shape=accuracyFactor)) + stat_smooth(aes(linetype=accuracyFactor), method = 'lm') + labs(y = 'RTs during inference (decision making)', x = 'learning RT slope', title = 'inference RTs by accuracy')
 ```
 
 they appear to also be present at some levels of congCue here! specifically:
@@ -254,10 +254,36 @@ they appear to also be present at some levels of congCue here! specifically:
 - there is no effect of accuracy on the previously-observed trend for true neutral trials
 
 
-## TO DO: how accuracy, scaledLogTrial.trend, and congCue interact to shape zconfidence ratings
+## how accuracy, scaledLogTrial.trend, and congCue interact to shape zconfidence ratings
 
-## TO DO: how accuracy, scaledLogTrial.trend, and congCue interact to shape zconfidence reaction times
+```{r}
+df_inf %>% 
+  mutate(accuracyFactor = factor(accuracy, levels=c(1,0), labels=c('correct', 'incorrect'))) %>%
+  group_by(subID, congCue, trueCue, trueCongruence, accuracyFactor) %>%
+  summarise(meanRate = mean(zconf, na.rm=T)) %>%
+  left_join(., df_trueCue_trends, by=c('subID', 'trueCue')) %>%
+  mutate(trueCue = factor(trueCue, levels=c(0.5, 0.65, 0.8))) %>%
+  ggplot(., aes(x=scaledLogTrial.trend, y=meanRate, color=factor(congCue), fill=factor(congCue))) + geom_hline(yintercept = 0) +
+  facet_grid(~congCue) + 
+  theme_bw() + geom_point(aes(shape=accuracyFactor)) + stat_smooth(aes(linetype=accuracyFactor), method = 'lm') + labs(y = 'RTs during inference (decision making)', x = 'z confidence rating')
 
+```
+
+
+
+## how accuracy, scaledLogTrial.trend, and congCue interact to shape zconfidence reaction times
+```{r}
+df_inf %>% 
+  mutate(accuracyFactor = factor(accuracy, levels=c(1,0), labels=c('correct', 'incorrect'))) %>%
+  group_by(subID, congCue, trueCue, trueCongruence, accuracyFactor) %>%
+  summarise(meanZconfRT = mean(zconfRT, na.rm=T)) %>%
+  left_join(., df_trueCue_trends, by=c('subID', 'trueCue')) %>%
+  mutate(trueCue = factor(trueCue, levels=c(0.5, 0.65, 0.8))) %>%
+  ggplot(., aes(x=scaledLogTrial.trend, y=meanZconfRT, color=factor(congCue), fill=factor(congCue))) + geom_hline(yintercept = 0) +
+  facet_grid(~congCue) + 
+  theme_bw() + geom_point(aes(shape=accuracyFactor)) + stat_smooth(aes(linetype=accuracyFactor), method = 'lm') + labs(y = 'RTs during inference (decision making)', x = 'confidence rating RTs')
+
+```
 ---
 
 # SLIDING WINDOW ANALYSIS
