@@ -27,8 +27,7 @@ df_learn <- read.csv('data/learning.csv')
 df_learn <- df_learn %>%
   filter(trial < 91) %>%
   mutate(scaledTrial = as.numeric(scale(trial)),
-         scaledLogTrial = as.numeric(scale(log(trial))), 
-         cueIdx = factor(cueIdx, levels=c(1,2,3), labels=c('non-neutral1', 'non-neutral2', 'neutral'))) %>%
+         scaledLogTrial = as.numeric(scale(log(trial)))) %>%
   group_by(subID) %>%
   mutate(scaledImgLockedRT = as.numeric(scale(imgLockedRT))) %>%
   ungroup()
@@ -66,8 +65,24 @@ summary(m)
 - significant main effect of trueCue: people are faster for more predictive trueCues
 - potentially trending interaction between trial & trueCue: people get (marginally) faster for more predictive trueCues over the course of learning
 
-# empirical plots: scaledImgLockedRT by scaledLogTrial
+## compare to just `scaledTrial` as the predictor
 ```{r}
+# fit model
+m <- lm(scaledImgLockedRT ~ scaledTrial * trueCue + imageIdx, data = df_learn)
+# plot trends
+emmip(m, trueCue ~ scaledTrial, CIs=T, at=list(trueCue = unique(df_learn$trueCue),
+                                                    scaledTrial = range(df_learn$scaledTrial))) + 
+  geom_hline(yintercept=mean(df_learn$scaledImgLockedRT,na.rm=T)) + labs(y='scaledimgLockedRT', title = 'fitted trends: scaledimgLockedRT ~ scaledTrial * trueCue')
+# view summary
+summary(m) 
+```
+
+# aaron question: which one should we use?
+
+---
+
+# empirical plots: scaledImgLockedRT by scaledLogTrial
+```{r, include=F}
 df_learn %>%
   mutate(trueCue = factor(trueCue))%>%
   ggplot(aes(x=scaledLogTrial, y=scaledImgLockedRT, color=trueCue, fill=trueCue)) +
@@ -76,7 +91,7 @@ df_learn %>%
 ```
 
 # fit regression model for each subject, extract simple slopes for trueCue
-```{r}
+```{r, echo=F}
 trueCue_coefs <- list()
 trueCue_trends <- list()
 
@@ -107,8 +122,8 @@ df_trueCue_trends <- bind_rows(trueCue_trends)
 ```
  
  
-# make simple plots of correlations of interest
-## correlation between learning interaction coefficient & cueCorr
+# relationships between slope of learning RTs & explicit report metrics
+## cueCorr: accuracy of cue ordering
 ```{r}
 # make dataframe with just the interaction coefficients
 df_trueCue_interaction_coefs <- df_trueCue_coefs %>% filter(term == 'scaledLogTrial:trueCue') 
@@ -117,7 +132,7 @@ df_trueCue_interaction_coefs <- df_trueCue_coefs %>% filter(term == 'scaledLogTr
 df_est %>% select(cueCorr, subID) %>% unique() %>%
   left_join(., df_trueCue_interaction_coefs, by='subID') %>%
   ggplot(aes(x=estimate, y=cueCorr)) + theme_bw() + geom_point() +
-  stat_smooth(method='lm') + labs(x='scaledLogTrial*trueCue interaction coefficient')
+  stat_smooth(method='lm') + labs(x='learning RT slope', title = 'predicting cueCorr with slope of RTs during learning')
 
 # fit linear model
 df_est %>% select(cueCorr, subID) %>% unique() %>%
@@ -125,7 +140,7 @@ df_est %>% select(cueCorr, subID) %>% unique() %>%
   lm(cueCorr ~ estimate, .) %>% summary()
 ```
 
-## correlation between simple slope for each trueCue and the average cueDiff for that trueCue
+## cueDiff: signed difference between reported - true
 ```{r}
 
 df_cueDiffs <- df_est %>% group_by(subID, trueCue) %>% summarise(meanDiff = mean(cueDiff, na.rm=T))
@@ -133,20 +148,20 @@ df_cueDiffs <- df_est %>% group_by(subID, trueCue) %>% summarise(meanDiff = mean
 # make a plot
 df_cueDiffs %>% left_join(., df_trueCue_trends, by=c('subID', 'trueCue')) %>%
   mutate(trueCue = factor(trueCue, levels=c(0.5, 0.65, 0.8))) %>%
-  ggplot(., aes(x=scaledLogTrial.trend, y=meanDiff, color=trueCue, fill=trueCue)) + facet_wrap(~trueCue) + 
-  theme_bw() + geom_point() + stat_smooth(method = 'lm') + labs(y = 'average cueDiff', x = 'effect of trial on scaledImgLockedRT')
+  ggplot(., aes(x=scaledLogTrial.trend, y=meanDiff, color=trueCue, fill=trueCue)) + facet_wrap(~trueCue) + geom_hline(yintercept=0) +
+  theme_bw() + geom_point() + stat_smooth(method = 'lm') + labs(y = 'average cueDiff', x = 'learning RT slope', title='predicting cueDiff with learning RT slope & trueCue')
 
 # fit a linear model
 df_cueDiffs %>% left_join(., df_trueCue_trends, by=c('subID', 'trueCue')) %>%
   lm(meanDiff ~ scaledLogTrial.trend*trueCue, .) %>% summary()
 ```
-## correlation between simple slope for each trueCue and the reported value for that cue
+## subjectiveCue: explicitly reported cue probability
 ```{r}
 # plot
 df_est %>% left_join(., df_trueCue_trends, by=c('subID', 'trueCue')) %>%
   mutate(trueCue = factor(trueCue, levels=c(0.5, 0.65, 0.8))) %>%
   ggplot(., aes(x=scaledLogTrial.trend, y=subjectiveCue, color=trueCue, fill=trueCue)) + facet_wrap(~trueCue) + 
-  theme_bw() + geom_point() + stat_smooth(method = 'lm') + labs(y = 'subjectiveCue', x = 'slope of scaledLogTrial')
+  theme_bw() + geom_point() + stat_smooth(method = 'lm') + labs(y = 'subjectiveCue', x = 'learning RT slope', title='predicting subjectiveCue using learningRT slope * trueCue')
 
 # fit linear model
 df_est %>% left_join(., df_trueCue_trends, by=c('subID', 'trueCue')) %>%
@@ -160,14 +175,14 @@ df_est %>% left_join(., df_trueCue_trends, by=c('subID', 'trueCue')) %>%
             nonlinear_corr = cor(scaledLogTrial.trend, subjectiveCue, method='spearman'))
 ```
 
-## correlation between simple slope for each trueCue and the average confidence for that cue
+## cueConfidence: confidence in subjectiveCue report
 ```{r}
 # plot
 df_est %>% left_join(., df_trueCue_trends, by=c('subID', 'trueCue')) %>%
   mutate(trueCue = factor(trueCue, levels=c(0.5, 0.65, 0.8))) %>%
   ggplot(., aes(x=scaledLogTrial.trend, y=zCueConf, color=trueCue, fill=trueCue)) + geom_hline(yintercept = 0) +
   facet_wrap(~trueCue) + 
-  theme_bw() + geom_point() + stat_smooth(method = 'lm') + labs(y = 'zCueConfidence', x = 'slope of scaledLogTrial')
+  theme_bw() + geom_point() + stat_smooth(method = 'lm') + labs(y = 'zCueConfidence', x = 'learning RT slope', title = 'predicting cueConfidence using learningRT slope * trueCue')
 
 # fit linear model
 df_est %>% left_join(., df_trueCue_trends, by=c('subID', 'trueCue')) %>%
@@ -181,6 +196,131 @@ df_est %>% left_join(., df_trueCue_trends, by=c('subID', 'trueCue')) %>%
             nonlinear_corr = cor(scaledLogTrial.trend, zCueConf, method='spearman', use='na.or.complete'))
 ```
 
+---
+
+# effects of learning RT slopes on behavior during inference
+
+## effects on RTs independent of accuracy
+```{r}
+
+# make plot
+df_inf %>% 
+  group_by(subID, congCue, trueCue, trueCongruence) %>%
+  summarise(meanRT = mean(zlogRT, na.rm=T)) %>%
+  left_join(., df_trueCue_trends, by=c('subID', 'trueCue')) %>%
+  mutate(trueCue = factor(trueCue, levels=c(0.5, 0.65, 0.8))) %>%
+  ggplot(., aes(x=scaledLogTrial.trend, y=meanRT, color=factor(congCue), fill=factor(congCue))) + geom_hline(yintercept = 0) +
+  facet_grid(~congCue) + 
+  theme_bw() + geom_point() + stat_smooth(method = 'lm') + labs(y = 'RTs during inference (decision making)', x = 'learning RT slope')
+
+# fit & plot linear model
+# df_inf %>% left_join(., df_trueCue_trends, by=c('subID', 'trueCue')) %>%
+#   lm(zlogRT ~ scaledLogTrial.trend*congCue, .) %>% #summary()
+#   emmip(., ~ scaledLogTrial.trend | congCue, var='congCue', CIs=T,
+#         at=list(scaledLogTrial.trend=range(df_trueCue_trends$scaledLogTrial.trend),
+#                                                                     congCue = c(0.2, 0.5, 0.8)))
+# # emtrends for linear model
+# df_inf %>% left_join(., df_trueCue_trends, by=c('subID', 'trueCue')) %>%
+#   lm(zlogRT ~ scaledLogTrial.trend*congCue, .) %>%
+#   emtrends(eff ~ scaledLogTrial.trend, var = 'congCue', 
+#            at=list(scaledLogTrial.trend=range(df_trueCue_trends$scaledLogTrial.trend),
+#                    congCue=c(0.8)))
+```
+- x-axis: slope of regression line for RTs during learning --> implicit measure of statistical learning
+- y-axis: each subject's average RT during _inference_ --> 0 represents the mean across all participants in that condition
+- panels: prediction on that trial, ranging from strongly incongruent (congCue==0.2) to strongly congruent(congCue==0.8). neutral cue (makes no real prediction) in the middle (congCue == 0.5)
+
+interpretation (panel by panel):
+- on strong incongruent trials: subjects who got faster at responding during learning (x < 0) made _slower_ responses during decision making.
+- on weak incongruent trials: there does not appear to be a strong/meaningful relationship between learning RTs & decision RTs.
+- on "neutral" trials: subjects who were faster at responding to the cue during learning (x < 0) were significantly slower to make responses *when this cue was presented* during decision making
+- on strong congruent trials: subjects who got faster at responding during learning (x < 0) made _faster_ responses, whereas subjects who got slower at responding during learning made _slower_ responses during decision making
+
+## inference RTs split up by accuracy
+```{r}
+df_inf %>% 
+  mutate(accuracyFactor = factor(accuracy, levels=c(1,0), labels=c('correct', 'incorrect'))) %>%
+  group_by(subID, congCue, trueCue, trueCongruence, accuracyFactor) %>%
+  summarise(meanRT = mean(zlogRT, na.rm=T)) %>%
+  left_join(., df_trueCue_trends, by=c('subID', 'trueCue')) %>%
+  mutate(trueCue = factor(trueCue, levels=c(0.5, 0.65, 0.8))) %>%
+  ggplot(., aes(x=scaledLogTrial.trend, y=meanRT, color=factor(congCue), fill=factor(congCue))) + geom_hline(yintercept = 0) +
+  facet_grid(~congCue) + 
+  theme_bw() + geom_point(aes(shape=accuracyFactor)) + stat_smooth(aes(linetype=accuracyFactor), method = 'lm') + labs(y = 'RTs during inference (decision making)', x = 'learning RT slope')
+```
+
+they appear to also be present at some levels of congCue here! specifically:
+- there is a strong interaction with accuracy for strong congruent trials
+- there is no effect of accuracy on the previously-observed trend for true neutral trials
+
+
+## TO DO: how accuracy, scaledLogTrial.trend, and congCue interact to shape zconfidence ratings
+
+## TO DO: how accuracy, scaledLogTrial.trend, and congCue interact to shape zconfidence reaction times
+
+---
+
+# SLIDING WINDOW ANALYSIS
+### start by setting up dataframe & making some simple plots
+```{r}
+# compute counter variables
+df_learn_new <- df_learn %>%
+  group_by(subID) %>%
+  mutate(cue1_counter1 = cumsum(cueIdx==1 & imageIdx==1),
+         cue1_counter2 = cumsum(cueIdx==1 & imageIdx==2),
+         cue2_counter1 = cumsum(cueIdx==2 & imageIdx==1),
+         cue2_counter2 = cumsum(cueIdx==2 & imageIdx==2),
+         cue3_counter1 = cumsum(cueIdx==3 & imageIdx==1),
+         cue3_counter2 = cumsum(cueIdx==3 & imageIdx==2))
+
+# make an example plot
+df_learn_new %>% filter(subID == 78) %>%
+  ggplot(aes(x=trial)) +
+  geom_line(aes(y=cue1_counter1), color='orange') + geom_line(aes(y=cue1_counter2), color='orange', linetype='dashed') +
+  geom_line(aes(y=cue2_counter1), color='green') + geom_line(aes(y=cue2_counter2), color='green', linetype='dashed') +
+  geom_line(aes(y=cue3_counter1), color='purple') + geom_line(aes(y=cue3_counter2), color='purple', linetype='dashed') + theme_bw()
+```
+
+```{r}
+# compute number of matches between cue & image observed in each window of trials
+window_size <- 5
+window_bins <- seq(1, max(df_learn$trial), by=window_size)
+
+df_learn_summary <- df_learn_new %>%
+  group_by(subID) %>% 
+  mutate(window_bin = ceiling(trial / window_size)) %>%
+  group_by(subID, cueIdx, window_bin) %>%
+  summarise(nMatch_cue1 = max(cue1_counter1),
+            nMismatch_cue1 = max(cue1_counter2),
+            nMatch_cue2 = max(cue2_counter2),
+            nMismatch_cue2 = max(cue2_counter1),
+            img1_cue3 = max(cue3_counter1),
+            img3_cue3 = max(cue3_counter2))
+```
+
+## first type of sliding window analysis: how does volatility early in learning affect slopes of RTs during learning?
+```{r}
+
+
+
+
+```
+
+```{r}
+# fit & plot linear model
+df_inf %>% left_join(., df_trueCue_trends, by=c('subID', 'trueCue')) %>%
+  lm(zlogRT ~ scaledLogTrial.trend*congCue, .) %>% #summary()
+  emmip(., ~ scaledLogTrial.trend | congCue, var='congCue', CIs=T,
+        at=list(scaledLogTrial.trend=range(df_trueCue_trends$scaledLogTrial.trend),
+                                                                    congCue = c(0.2, 0.5, 0.8)))
+# emtrends for linear model
+df_inf %>% left_join(., df_trueCue_trends, by=c('subID', 'trueCue')) %>%
+  lm(zlogRT ~ scaledLogTrial.trend*congCue, .) %>%
+  emtrends(eff ~ scaledLogTrial.trend, var = 'congCue', 
+           at=list(scaledLogTrial.trend=range(df_trueCue_trends$scaledLogTrial.trend),
+                   congCue=c(0.8)))
+
+```
 
 ## individual correlations with different outcome variables of interest
 ```{r}
