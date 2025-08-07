@@ -49,6 +49,64 @@ df_inf <- df_inf %>%
          zconfRT = scale(confRT))
 ```
 
+# cuecorr lollipop plot
+```{r}
+# Prepare the data
+all_participants <- sort(unique(df_est$subID))
+conditions <- c("condition_80cue", "condition_65cue")  # Define your specific conditions
+
+# Create plotting data with position adjustments
+plot_data <- df_est %>%
+  select(subID, condition, cueCorr) %>%
+  distinct() %>%
+  arrange(subID) %>%
+  mutate(
+    participant_index = match(subID, all_participants),
+    condition_offset = ifelse(condition == "condition_80cue", -0.15, 0.15),
+    x_position = participant_index + condition_offset
+  )
+
+# Create the plot
+p <- ggplot(plot_data, aes(x = x_position, y = cueCorr, color = condition)) +
+  # Add vertical lines from 0 to each point
+  geom_segment(aes(xend = x_position, yend = 0), 
+               linewidth = 1.5, alpha = 0.8) +
+  # Add points
+  geom_point(size = 3) +
+  # Customize colors (using default ggplot2 colors)
+  # scale_color_discrete() +
+  # Set x-axis
+  scale_x_continuous(
+    breaks = seq(1, length(all_participants), by = 2),  # Show every 2nd participant
+    labels = all_participants[seq(1, length(all_participants), by = 2)],
+    limits = c(0.7, length(all_participants) + 0.3),  # Tighter limits
+    expand = c(0, 0) 
+  ) +
+  # Labels and title
+  labs(
+    x = "SubID",
+    y = "Cue Correlation",
+    title = "Cue Correlation by SubID and Condition",
+    color = "Condition"
+  ) +
+  # Theme adjustments
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 0.5, size = 6),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_line(colour = "grey80"),
+    plot.title = element_text(hjust = 0.5),
+    legend.position = "right",  # Ensure legend appears on the right side
+    figure.size = c(14, 8)
+  )
+p
+
+# Save the plot
+ggsave("~/Desktop/SummerInstitute2025/plots/cueCorr_by_condition.png", plot = p, width = 14, height = 8, dpi = 600, units = "in")
+```
+
+
 # slope of regression lines during learning: all subjects
 
 ## predicting z-scored image-locked RT using `trueCue * logTrial`, controlling for response finger using `imageIdx` as a regressor
@@ -245,12 +303,14 @@ df_inf %>%
   ggplot(., aes(x=logTrial.trend, y=meanRT, color=factor(congCue), fill=factor(congCue))) + geom_hline(yintercept = 0) +
   facet_grid(~congCue) + 
   theme_bw() + geom_point(aes(shape=accuracyFactor)) + stat_smooth(aes(linetype=accuracyFactor), method = 'lm') + labs(y = 'RTs during inference (decision making)', x = 'learning RT slope', title = 'inference RTs by accuracy')
+
+#Save plot
+ggsave("~/Desktop/SummerInstitute2025/plots/infRts_byAccuracy.png", width = 14, height = 8, dpi = 600, units = "in")
 ```
 
 they appear to also be present at some levels of congCue here! specifically:
 - there is a strong interaction with accuracy for strong congruent trials
 - there is no effect of accuracy on the previously-observed trend for true neutral trials
-
 
 ## how accuracy, logTrial.trend, and congCue interact to shape zconfidence ratings
 
@@ -264,8 +324,8 @@ df_inf %>%
   ggplot(., aes(x=logTrial.trend, y=meanRate, color=factor(congCue), fill=factor(congCue))) + geom_hline(yintercept = 0) +
   facet_grid(~congCue) + 
   theme_bw() + geom_point(aes(shape=accuracyFactor)) + stat_smooth(aes(linetype=accuracyFactor), method = 'lm') + labs(y = 'confidence ratings during inference (decision making)', x = 'learning RT slope', title = 'zconfidence ratings by accuracy')
-
 ```
+
 incongruent cues they get more confident with correct responses
 reverse of trends
 slower during learning more confident during incorrect responses
@@ -282,8 +342,8 @@ df_inf %>%
   ggplot(., aes(x=logTrial.trend, y=meanZconfRT, color=factor(congCue), fill=factor(congCue))) + geom_hline(yintercept = 0) +
   facet_grid(~congCue) + 
   theme_bw() + geom_point(aes(shape=accuracyFactor)) + stat_smooth(aes(linetype=accuracyFactor), method = 'lm') + labs(y = 'confidence ratings RTS during inference (decision making)', x = 'learning RT slope', title = 'confidence rating RTs by accuracy')
-
 ```
+
 ---
 
 # SLIDING WINDOW ANALYSIS
@@ -322,6 +382,25 @@ df_learn_summary <- df_learn_new %>%
             nMismatch_cue2 = max(cue2_counter1),
             img1_cue3 = max(cue3_counter1),
             img3_cue3 = max(cue3_counter2))
+```
+
+# Learning RTs and Cue Prediction Accuracy
+```{r}
+df_learn %>%
+  left_join(df_trueCue_trends, by = c('subID', 'trueCue')) %>%
+  mutate(congCueFactor = factor(congCue, levels=c(0,1), labels=c('incongruent', 'congruent'))) %>%
+  ggplot(., aes(x=logTrial.trend, y=accuracy, color=factor(congCue), fill=factor(congCue))) +
+  geom_hline(yintercept = 0.5) +
+  facet_grid(~congCue) + 
+  theme_bw() + 
+  stat_smooth(method = 'lm', se = TRUE, alpha = 0.2) + 
+  labs(
+    y = 'Cue Prediction Accuracy', 
+    x = 'Learning RT Slope', 
+    title = 'Learning RTs and Cue Prediction Accuracy'
+  ) +
+  scale_color_viridis_d(guide = "none") +
+  scale_fill_viridis_d(guide = "none")
 ```
 
 ## first type of sliding window analysis: how does volatility early in learning affect slopes of RTs during learning?
