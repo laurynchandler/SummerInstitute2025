@@ -1,0 +1,323 @@
+---
+title: "poster_plots"
+output: html_document
+date: "2025-08-05"
+---
+
+```{r load packages, echo=FALSE, include=FALSE}
+library(tidyverse)
+library(lme4)
+library(lmerTest)
+library(performance)
+library(patchwork)
+library(emmeans)
+library(corrplot)
+library(Hmisc)
+library(broom)
+library(corrr)
+library(reshape2)
+outdir = '~/Desktop/SummerInstitute2025/plots/'
+```
+
+```{r load data, message=FALSE, warning=FALSE}
+# learning data
+df_learn <- read.csv('~/Desktop/SummerInstitute2025/data/learning.csv')
+df_learn <- df_learn %>%
+  filter(trial < 91) %>%
+  mutate(scaledTrial = as.numeric(scale(trial)),
+         logTrial = as.numeric(log(trial))) %>%
+  group_by(subID) %>%
+  mutate(scaledImgLockedRT = as.numeric(scale(imgLockedRT))) %>%
+  ungroup()
+
+# estimates data
+df_est <- read.csv('~/Desktop/SummerInstitute2025/data/estimates.csv')
+df_est <- df_est %>%
+  group_by(subID) %>%
+  mutate(zCueConf = as.numeric(scale(cueConfidence)),
+         cueCorr = cor(trueCue, subjectiveCue),
+         cueDiff = subjectiveCue - trueCue) %>%
+  ungroup()
+
+# inference data
+df_inf <- read.csv('~/Desktop/SummerInstitute2025/data/inference_test_tidy.csv') %>% select(-X)
+df_inf <- df_inf %>%
+  group_by(subID) %>%
+  mutate(zconf = scale(confidence),
+         zconfRT = scale(confRT),
+         accuracyFactor = factor(accuracy, levels=c(1,0), labels=c('correct', 'incorrect')))
+```
+
+
+# fit regression model for each subject, extract simple slopes for trueCue
+```{r, echo=F}
+trueCue_coefs <- list()
+trueCue_trends <- list()
+
+for(sub_id in unique(df_learn$subID)) {
+  df_sub <- df_learn %>% filter(subID == sub_id)
+  model_sub <- lm(scaledImgLockedRT ~ logTrial * trueCue + imageIdx, data = df_sub)
+
+  # Get tidy results with coefficients, t-values, and p-values
+  tidy_true <- tidy(model_sub)
+  # Add subject ID
+  tidy_true$subID <- sub_id
+  
+  # get the emtrends
+  trends <- emtrends(model_sub, ~ trueCue, var='logTrial', at=list(trueCue=unique(df_sub$trueCue))) %>% 
+    as.data.frame() %>% mutate(subID = sub_id)
+
+  # Add to lists
+  trueCue_coefs[[length(trueCue_coefs) + 1]] <- tidy_true
+  trueCue_trends[[length(trueCue_trends) + 1]] <- trends
+}
+
+# Combine all results
+df_trueCue_coefs <- bind_rows(trueCue_coefs) %>% mutate(condition = ifelse(subID > 54, '65/50 condition', '80/50 condition'))
+df_trueCue_trends <- bind_rows(trueCue_trends) %>% mutate(condition = ifelse(subID > 54, '65/50 condition', '80/50 condition'))
+
+# and add to the inference df
+df_inf <- df_inf %>% mutate(condition = factor(condition, levels=c('condition_80cue', 'condition_65cue'),
+                                                              labels=c('80/50 condition', '65/50 condition'))) %>%
+  left_join(., df_trueCue_trends, by=c('subID', 'trueCue', 'condition'))
+# Reorder columns to put subID first
+# df_trueCue_coefs <- df_trueCue_coefs[, c("subID", "term", "estimate", "std.error", "statistic", "p.value")]
+```
+
+# fit regression model for each subject, extract single slope for RTs across all cues in learning
+```{r}
+learning_coefs <- list()
+learning_trends <- list()
+
+for(sub_id in unique(df_learn$subID)) {
+  df_sub <- df_learn %>% filter(subID == sub_id)
+  model_sub <- lm(scaledImgLockedRT ~ logTrial + imageIdx, data = df_sub)
+
+  # Get tidy results with coefficients, t-values, and p-values
+  learning_trend <- tidy(model_sub)
+  # Add subject ID
+  learning_trend <- learning_trend %>% mutate(subID = sub_id) %>% filter(term == 'logTrial') %>% select(term, estimate, subID)
+  
+  # Add to lists
+  learning_trends[[length(learning_trends) + 1]] <- learning_trend
+}
+
+# Combine all results
+df_learning_trends <- bind_rows(learning_trends) %>% 
+  mutate(condition = ifelse(subID > 54, '65/50 condition', '80/50 condition')) %>%
+  rename(simpleTrend = estimate) %>%
+  select(-term)
+
+# and add to the inference df
+df_inf <- df_inf %>%
+  left_join(., df_learning_trends, by=c('subID', 'condition'))
+```
+ 
+# bar plot showing the average slope of RTs during learning, with each individual subject's slope values as a unique point on top
+```{r}
+df_trueCue_trends %>% 
+  ggplot(aes(x=factor(trueCue), y=logTrial.trend, color=factor(trueCue), fill=factor(trueCue))) + 
+  theme_bw() + geom_hline(yintercept=0) +
+  facet_wrap(~condition) +
+  stat_summary(fun='mean', geom='col') +
+  geom_line(aes(group=subID),alpha=0.3, color='black') +
+  geom_point(position=position_jitter(width=0.05, height=0), alpha=1 , color='gray', shape=21, size=1.75) + 
+  stat_summary(fun.data = 'mean_se', color='black') + 
+  stat_summary(aes(group=condition), fun = 'mean', geom='line', size=1, color='black') +
+  labs(y = 'slope of RTs during learning', x = 'cue probability') +
+  theme(text = element_text(size=14)) +
+  scale_fill_manual(values = c('goldenrod', '#7f902b', 'forestgreen')) + 
+  scale_color_manual(values = c('goldenrod', '#7f902b', 'forestgreen')) +
+  guides(color='none',fill='none')
+
+ggsave(paste0(outdir, 'rtSlopes.png'), dpi='retina', width=5, height=3)
+```
+ 
+# regression plot showing two example subject RT trends
+```{r}
+df_learn %>% filter(subID == 38 | subID == 75) %>%
+  group_by(subID) %>%
+  mutate(trueCue= factor(trueCue, levels=c(0.5, 0.65, 0.8))) %>%
+  ggplot(aes(x=logTrial, y=imgLockedRT, color=trueCue, fill=trueCue)) +
+  facet_wrap(~subID) +
+  geom_hline(yintercept = 0) + theme_bw() +
+  geom_point() + stat_smooth(method='lm') +
+  scale_fill_manual(values = c('goldenrod', '#7f902b', 'forestgreen')) + 
+  scale_color_manual(values = c('goldenrod', '#7f902b', 'forestgreen'))
+  #scale_color_gradient2(low = 'darkorchid3', high='forestgreen', mid='goldenrod', midpoint=0.5) +
+  #scale_color_gradient2(low = 'darkorchid3', high='forestgreen', mid='goldenrod', midpoint=0.5)
+
+ggsave(paste0(outdir, 'exampleRTs.png'), width=5, height=3, dpi='retina')
+```
+
+## histogram of simple slopes
+```{r}
+# can color and/or facet according to condition if desired
+df_learning_trends %>% ggplot(aes(x=simpleTrend)) + 
+  geom_histogram(bins = 10, color='gray') + facet_wrap(~condition) + theme_bw()
+```
+
+
+## make summary dataframe for plotting individual points over fitted regression plots
+```{r}
+
+summary_df <- df_inf %>% 
+  group_by(subID, congCue, trueCue, trueCongruence, accuracyFactor) %>%
+  summarise(meanConf = mean(zconf, na.rm=T),
+            meanRT = mean(zlogRT, na.rm=T)) %>%
+  left_join(., df_trueCue_trends, by=c('subID', 'trueCue'))
+
+```
+ 
+## inference RTs split up by accuracy
+
+## regression for plot below
+```{r}
+# simple linear regression (same fixed effect for all subjects)
+inference_rt_lm <- df_inf %>% left_join(., df_trueCue_trends, by=c('subID', 'trueCue')) %>%
+  lm(zlogRT ~ logTrial.trend*congCue*accuracyFactor, .) 
+```
+
+```{r}
+# plots for regressions above
+emtrends(inference_rt_lm, eff ~ congCue * accuracyFactor, var='logTrial.trend', at=list(congCue=unique(df_inf$congCue)))
+
+infplot_df <- emmip(inference_rt_lm, congCue ~ logTrial.trend | accuracyFactor, at=list(congCue=unique(df_inf$congCue),
+                                                                                        logTrial.trend=range(summary_df$logTrial.trend)), plotit=F, CIs=T)
+
+# 3-way interaction stats
+coef_table_rt <- summary(inference_rt_lm)$coefficients
+three_way_rt <- coef_table_rt["logTrial.trend:congCue:accuracyFactorincorrect", ]
+
+beta_rt <- three_way_rt["Estimate"]
+t_value_rt <- three_way_rt["t value"] 
+p_value_rt <- three_way_rt["Pr(>|t|)"]
+df_rt <- inference_rt_lm$df.residual
+
+# print stats
+cat("RT Model 3-way interaction:\n")
+cat("Beta:", beta_rt, "\n")
+cat("t-value:", t_value_rt, "\n") 
+cat("df:", df_rt, "\n")
+cat("p-value:", p_value_rt, "\n")
+
+```
+
+
+## inference RTs split up by accuracy
+```{r}
+infplot_df %>% 
+  ggplot(., aes(x=logTrial.trend, y=yvar, color=congCue, fill=congCue)) +
+  geom_hline(yintercept = 0) + 
+  geom_vline(xintercept = 0, linetype='dashed', color='gray') +
+  facet_grid(accuracyFactor~congCue) + 
+  geom_ribbon(aes(ymin=LCL, ymax=UCL), alpha=0.2, color=NA) +
+  geom_line(size=1) +
+  geom_point(aes(x=logTrial.trend, y=meanRT, shape=accuracyFactor), data=summary_df) + 
+  scale_shape_manual(values = c(21, 1)) +
+  scale_color_gradient2(low = 'darkorchid3', high='forestgreen', mid='goldenrod', midpoint=0.5) +
+  scale_fill_gradient2(low = 'darkorchid3', high='forestgreen', mid='goldenrod', midpoint=0.5) +
+  theme_bw() +
+  theme(axis.text.x = element_text(size=10), 
+        panel.spacing.x = unit(.5, "cm")) +
+  labs(y = 'RTs during decision making', x = 'learning RT slope') +
+  guides(shape = 'none', color='none', fill='none')
+
+# Save plot
+ggsave(paste0(outdir, 'infRts_byAccuracy.png'), width = 8, height = 3, dpi = 600, units = "in")
+```
+
+## how accuracy, logTrial.trend, and congCue interact to shape zconfidence ratings
+
+# regression for plot below
+```{r}
+# simple linear regression
+inference_conf_lm <- df_inf %>% left_join(., df_trueCue_trends, by=c('subID', 'trueCue')) %>%
+  lm(zconf ~ logTrial.trend*congCue*accuracyFactor, .) 
+summary(inference_conf_lm)
+
+emtrends(inference_conf_lm, eff ~ congCue * accuracyFactor, var='logTrial.trend', at=list(congCue=unique(df_inf$congCue)))
+
+plot_df <- emmip(inference_conf_lm, congCue ~ logTrial.trend | accuracyFactor, at=list(congCue=unique(df_inf$congCue),
+                                                                            logTrial.trend=range(summary_df$logTrial.trend)), plotit=F, CIs=T)
+# 3-way interaction stats
+coef_table <- summary(inference_conf_lm)$coefficients
+three_way <- coef_table["logTrial.trend:congCue:accuracyFactorincorrect", ]
+
+beta <- three_way["Estimate"]
+t_value <- three_way["t value"] 
+p_value <- three_way["Pr(>|t|)"]
+df <- inference_conf_lm$df.residual
+
+# Print stats
+cat("Beta:", beta, "\n")
+cat("t-value:", t_value, "\n") 
+cat("df:", df, "\n")
+cat("p-value:", p_value, "\n")
+
+```
+## plot regression estimates directly
+```{r}
+plot_df %>%
+  ggplot(., aes(x=logTrial.trend, y=yvar, color=congCue, fill=congCue)) + 
+  geom_hline(yintercept = 0) + geom_vline(xintercept = 0, linetype='dashed', color='gray') +
+  facet_grid(accuracyFactor ~ congCue) + 
+  geom_ribbon(aes(ymin=LCL, ymax=UCL), alpha=0.2, color=NA) +
+  geom_line(size=1) +
+  geom_point(aes(x=logTrial.trend, y=meanConf, shape=accuracyFactor), data=summary_df) + 
+  scale_color_gradient2(low = 'darkorchid3', high='forestgreen', mid='goldenrod', midpoint=0.5) +
+  scale_fill_gradient2(low = 'darkorchid3', high='forestgreen', mid='goldenrod', midpoint=0.5) +
+  scale_shape_manual(values = c(21, 1)) +
+  theme_bw() + 
+  theme(axis.text.x = element_text(size=10), 
+        panel.spacing.x = unit(.5, "cm")) +
+  labs(y = 'confidence ratings during decision making', x = 'learning RT slope') +
+  guides(color='none', fill='none', shape='none')
+
+# Save plot
+ggsave(paste0(outdir, 'zconf_byAccuracy.png'), width = 7, height = 3, dpi = 600, units = "in")
+```
+
+
+## model comparisons for linear RTs & confidence
+```{r}
+
+# specify comparison model: one that does not include slopes of RTs during learning
+inference_rt_control_lm <- lm(zlogRT ~ congCue * accuracyFactor, data=df_inf) 
+
+# specify comparison model: one that does not include slopes of RTs during learning
+inference_conf_control_lm <- lm(zconf ~ congCue*accuracyFactor, df_inf) 
+
+# compare performance of RT models with & without slopes of RTs during learning
+compare_performance(inference_rt_control_lm, inference_rt_lm)
+
+# compare performance of confidence models with & without slopes of RTs during learning
+compare_performance(inference_conf_control_lm, inference_conf_lm)
+```
+
+## plot comparisons
+```{r}
+
+p1 <- compare_performance(inference_rt_control_lm, inference_rt_lm) %>% 
+  as.data.frame() %>%
+  mutate(Name = factor(Name, levels=c('inference_rt_control_lm', 'inference_rt_lm'),
+                       labels=c('without RT slopes', 'with RT slopes'))) %>%
+  ggplot(aes(x=Name, y=AIC)) + geom_col() + coord_cartesian(ylim=c(42390, 42420)) +
+  theme_bw() + labs(y='model performance (AIC)', title='Choice RTs') +
+  theme(axis.title.x = element_blank(),
+        text = element_text(size=14))
+  
+p2 <- compare_performance(inference_conf_control_lm, inference_conf_lm) %>% 
+  as.data.frame() %>%
+  mutate(Name = factor(Name, levels=c('inference_conf_control_lm', 'inference_conf_lm'),
+                       labels=c('without RT slopes', 'with RT slopes'))) %>%
+  ggplot(aes(x=Name, y=AIC)) + geom_col() + coord_cartesian(ylim=c(41440, 41455)) +
+  theme_bw() + labs(y='model performance (AIC)', title='Choice confidence') +
+  theme(axis.title.x = element_blank(),
+        text = element_text(size=14))
+
+p1 + p2
+
+ggsave(paste0(outdir, 'modelcomparisons.png'), width=6, height=3, dpi='retina')
+```
+
