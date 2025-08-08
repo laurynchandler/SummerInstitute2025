@@ -45,7 +45,10 @@ df_inf <- df_inf %>%
   group_by(subID) %>%
   mutate(zconf = scale(confidence),
          zconfRT = scale(confRT),
-         accuracyFactor = factor(accuracy, levels=c(1,0), labels=c('correct', 'incorrect')))
+         accuracyFactor = factor(accuracy, levels=c(1,0), labels=c('correct', 'incorrect')),condition = factor(condition, levels=c('condition_80cue', 'condition_65cue'),labels=c('80/50 condition', '65/50 condition')))
+
+# filter learning df so that only the above-chance subjects from inference are included in the final analysis
+df_learn <- df_learn %>% filter(subID %in% unique(df_inf$subID))
 ```
 
 
@@ -77,11 +80,11 @@ df_trueCue_coefs <- bind_rows(trueCue_coefs) %>% mutate(condition = ifelse(subID
 df_trueCue_trends <- bind_rows(trueCue_trends) %>% mutate(condition = ifelse(subID > 54, '65/50 condition', '80/50 condition'))
 
 # and add to the inference df
-df_inf <- df_inf %>% mutate(condition = factor(condition, levels=c('condition_80cue', 'condition_65cue'),
-                                                              labels=c('80/50 condition', '65/50 condition'))) %>%
-  left_join(., df_trueCue_trends, by=c('subID', 'trueCue', 'condition'))
-# Reorder columns to put subID first
-# df_trueCue_coefs <- df_trueCue_coefs[, c("subID", "term", "estimate", "std.error", "statistic", "p.value")]
+df_inf <- df_inf %>%
+  ungroup %>%
+  left_join(., df_trueCue_trends, by=c('subID', 'trueCue', 'condition')) %>%
+  group_by(subID)
+
 ```
 
 # fit regression model for each subject, extract single slope for RTs across all cues in learning
@@ -97,13 +100,13 @@ for(sub_id in unique(df_learn$subID)) {
   learning_trend <- tidy(model_sub)
   # Add subject ID
   learning_trend <- learning_trend %>% mutate(subID = sub_id) %>% filter(term == 'logTrial') %>% select(term, estimate, subID)
-  
+
   # Add to lists
   learning_trends[[length(learning_trends) + 1]] <- learning_trend
 }
 
 # Combine all results
-df_learning_trends <- bind_rows(learning_trends) %>% 
+df_learning_trends <- bind_rows(learning_trends) %>%
   mutate(condition = ifelse(subID > 54, '65/50 condition', '80/50 condition')) %>%
   rename(simpleTrend = estimate) %>%
   select(-term)
@@ -111,8 +114,9 @@ df_learning_trends <- bind_rows(learning_trends) %>%
 # and add to the inference df
 df_inf <- df_inf %>%
   left_join(., df_learning_trends, by=c('subID', 'condition'))
+
 ```
- 
+
 # bar plot showing the average slope of RTs during learning, with each individual subject's slope values as a unique point on top
 ```{r}
 df_trueCue_trends %>% 
@@ -150,25 +154,65 @@ df_learn %>% filter(subID == 38 | subID == 75) %>%
 ggsave(paste0(outdir, 'exampleRTs.png'), width=5, height=3, dpi='retina')
 ```
 
-## histogram of simple slopes
+#### CHANGING SLOPE ESTIMATE TO BE FOR ALL CUES, INSTEAD OF SPLITTING BY CUE: FITTING RTS ####
 ```{r}
-# can color and/or facet according to condition if desired
+
+inference_rt_lm_simpleTrend <- df_inf %>% 
+  lmer(zlogRT ~ simpleTrend*congCue*accuracyFactor + (1+simpleTrend*congCue*accuracyFactor|subID), .) 
+summary(inference_rt_lm_simpleTrend)
+
+emmip(inference_rt_lm_simpleTrend, congCue ~ simpleTrend | accuracyFactor, CIs=T, at=list(congCue=unique(df_inf$congCue),
+                                                                                   simpleTrend=unique(df_inf$simpleTrend)))
+
+
 df_learning_trends %>% ggplot(aes(x=simpleTrend)) + 
   geom_histogram(bins = 10, color='gray') + facet_wrap(~condition) + theme_bw()
 ```
-
-
 ## make summary dataframe for plotting individual points over fitted regression plots
 ```{r}
 
 summary_df <- df_inf %>% 
-  group_by(subID, congCue, trueCue, trueCongruence, accuracyFactor) %>%
+  group_by(subID, congCue, trueCongruence, accuracyFactor) %>%
   summarise(meanConf = mean(zconf, na.rm=T),
             meanRT = mean(zlogRT, na.rm=T)) %>%
-  left_join(., df_trueCue_trends, by=c('subID', 'trueCue'))
+  left_join(., df_learning_trends, by=c('subID'))
 
 ```
- 
+
+## histogram of simple slopes
+```{r}
+# can color and/or facet according to condition if desired
+df_learning_trends %>% ggplot(aes(x=simpleTrend)) + 
+  geom_histogram(bins = 10, color="white", fill = "steelblue4",show.legend = FALSE) + 
+  #scale_fill_manual(values =c("65/50 condition" = "lightgoldenrod2", "80/50 condition" = "plum")) +
+  theme_bw() +
+  theme(axis.text = element_text(size = 24))
+
+ggsave(paste0(outdir, 'simpleTrendshistogram.png'), width=7, height=3, dpi='retina')
+```
+
+# regression plot showing example subject RT trends using simpleTrends
+
+# subject 36 raw slope - imgLockedRT
+```{r}
+df_learn %>% 
+  filter(subID == 36) %>%
+  ggplot(aes(x = logTrial, y = imgLockedRT)) +
+  geom_point(alpha = 0.6, color = "steelblue3") +
+  geom_smooth(method = "lm", se = TRUE, 
+              color = "steelblue4",  
+              fill = "steelblue3") +  
+  geom_hline(yintercept = 0) + 
+  theme_bw() +
+  theme(axis.text = element_text(size = 24)) +
+  labs(x = "experience",
+       y = "imgLockedRT")
+
+
+ggsave(paste0(outdir, 'sub36rtslope.png'), width=5, height=3, dpi='retina')
+```
+
+
 ## inference RTs split up by accuracy
 
 ## regression for plot below
@@ -203,17 +247,42 @@ cat("p-value:", p_value_rt, "\n")
 
 ```
 
+# simpler RT model
+```{r}
+
+rt_lm_zScore <- df_inf %>% mutate(logRT = scale(log(RT))) %>%
+  lmer(logRT ~ congCue * simpleTrend + (congCue*simpleTrend | subID),.,
+      control = lmerControl(optimizer='bobyqa'))
+
+summary(rt_lm_zScore)
+
+rt_plot_df <- emmip(rt_lm_zScore, congCue ~ simpleTrend , plotit=F, CIs = T, at=list(simpleTrend = unique(df_inf$simpleTrend),
+                                                                  congCue = unique(df_inf$congCue)))
+```
+
+
+
+
 
 ## inference RTs split up by accuracy
 ```{r}
-infplot_df %>% 
-  ggplot(., aes(x=logTrial.trend, y=yvar, color=congCue, fill=congCue)) +
+#change label names
+cong_labels <- c(
+  "0.2" = "Strong\nIncongruent",
+  "0.35" = "Weak\nIncongruent", 
+  "0.5" = "Neutral",
+  "0.65" = "Weak\nCongruent",
+  "0.8" = "Strong\nCongruent"
+)
+
+rt_plot_df %>% 
+  ggplot(., aes(x=simpleTrend, y=yvar, color=congCue, fill=congCue)) +
   geom_hline(yintercept = 0) + 
   geom_vline(xintercept = 0, linetype='dashed', color='gray') +
-  facet_grid(accuracyFactor~congCue) + 
-  geom_ribbon(aes(ymin=LCL, ymax=UCL), alpha=0.2, color=NA) +
+  geom_ribbon(aes(ymin=LCL, ymax=UCL, group=congCue), alpha=0.2, color=NA) +
   geom_line(size=1) +
-  geom_point(aes(x=logTrial.trend, y=meanRT, shape=accuracyFactor), data=summary_df) + 
+  geom_point(aes(x=simpleTrend, y=meanRT), data=summary_df, alpha=0.5) + 
+  facet_grid(~congCue, labeller = labeller(congCue = cong_labels)) +
   scale_shape_manual(values = c(21, 1)) +
   scale_color_gradient2(low = 'darkorchid3', high='forestgreen', mid='goldenrod', midpoint=0.5) +
   scale_fill_gradient2(low = 'darkorchid3', high='forestgreen', mid='goldenrod', midpoint=0.5) +
@@ -228,6 +297,51 @@ ggsave(paste0(outdir, 'infRts_byAccuracy.png'), width = 8, height = 3, dpi = 600
 ```
 
 ## how accuracy, logTrial.trend, and congCue interact to shape zconfidence ratings
+
+## updated approach as of 08-07-2025
+```{r}
+
+rt_confidence_zScore <- df_inf %>% mutate(confidence = scale(confidence)) %>%
+  lmer(confidence ~ congCue * simpleTrend + (congCue*simpleTrend | subID),.,
+      control = lmerControl(optimizer='bobyqa'))
+
+summary(rt_confidence_zScore)
+
+rt_conf_plot_df <- emmip(rt_confidence_zScore, congCue ~ simpleTrend , plotit=F, CIs = T, at=list(simpleTrend = unique(df_inf$simpleTrend),
+                                                                  congCue = unique(df_inf$congCue)))
+```
+
+```{r}
+#change label names
+cong_labels <- c(
+  "0.2" = "Strong\nIncongruent",
+  "0.35" = "Weak\nIncongruent", 
+  "0.5" = "Neutral",
+  "0.65" = "Weak\nCongruent",
+  "0.8" = "Strong\nCongruent"
+)
+
+
+rt_conf_plot_df %>% 
+  ggplot(., aes(x=simpleTrend, y=yvar, color=congCue, fill=congCue)) +
+  geom_hline(yintercept = 0) + 
+  geom_vline(xintercept = 0, linetype='dashed', color='gray') +
+  geom_ribbon(aes(ymin=LCL, ymax=UCL, group=congCue), alpha=0.2, color=NA) +
+  geom_line(size=1) +
+  geom_point(aes(x=simpleTrend, y=meanConf), data=summary_df, alpha=0.5) + 
+  facet_grid(~congCue, labeller = labeller(congCue = cong_labels)) +
+  scale_shape_manual(values = c(21, 1)) +
+  scale_color_gradient2(low = 'darkorchid3', high='forestgreen', mid='goldenrod', midpoint=0.5) +
+  scale_fill_gradient2(low = 'darkorchid3', high='forestgreen', mid='goldenrod', midpoint=0.5) +
+  theme_bw() +
+  theme(axis.text.x = element_text(size=10), 
+        panel.spacing.x = unit(.5, "cm")) +
+  labs(y = 'confidence ratings during decision making', x = 'learning RT slope') +
+  guides(shape = 'none', color='none', fill='none')
+
+# Save plot
+ggsave(paste0(outdir, 'zconf_byAccuracy.png'), width = 8, height = 3, dpi = 600, units = "in")
+```
 
 # regression for plot below
 ```{r}
@@ -320,4 +434,5 @@ p1 + p2
 
 ggsave(paste0(outdir, 'modelcomparisons.png'), width=6, height=3, dpi='retina')
 ```
+
 
